@@ -8,14 +8,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Opt into Node 24 for all JS actions in this workflow. As of mid-2026 the
-# v4 actions (checkout / setup-node / upload-artifact / download-artifact)
-# still ship Node 20 binaries; this env var tells the runner to execute
-# them on Node 24 instead, silencing the deprecation warning and matching
-# what the runner will default to from June 2026.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   # Build the optional Apple Intelligence helper on macOS.
   #
@@ -57,7 +49,7 @@ jobs:
       built: ${{ steps.build.outputs.built }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Show toolchain
         run: |
@@ -78,7 +70,7 @@ jobs:
 
       - name: Upload helper artifact
         if: steps.build.outputs.built == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           # Per-runner artifact name so both matrix entries can upload
           # without colliding. The bundling step below tries each in turn.
@@ -95,10 +87,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
 
@@ -115,7 +107,7 @@ jobs:
       - name: Download helper (macos-26 if available)
         id: dl-26
         if: needs.build-helper.result == 'success' || needs.build-helper.result == 'failure'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         continue-on-error: true
         with:
           name: fm-helper-macos-26
@@ -123,7 +115,7 @@ jobs:
 
       - name: Download helper (macos-latest fallback)
         if: (needs.build-helper.result == 'success' || needs.build-helper.result == 'failure') && steps.dl-26.outcome != 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         continue-on-error: true
         with:
           name: fm-helper-macos-latest
@@ -173,7 +165,7 @@ jobs:
                "fm-helper/.build/*" "fm-helper/.swiftpm/*" "fm-helper/Package.resolved"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: metadata-filler-xpi
           path: ${{ steps.meta.outputs.xpi_name }}
