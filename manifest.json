@@ -1,0 +1,16 @@
+{
+    "manifest_version": 2,
+    "name": "Metadata Filler",
+    "version": "1.1.0",
+    "description": "Uses multimodal AI to find and fill missing metadata in your Zotero library by analysing PDF attachments.",
+    "author": "Metadata Filler Contributors",
+    "homepage_url": "https://github.com/metadata-filler/zotero-metadata-filler",
+    "applications": {
+        "zotero": {
+            "id": "metadata-filler@zotero-plugins.org",
+            "update_url": "https://raw.githubusercontent.com/metadata-filler/zotero-metadata-filler/main/update.json",
+            "strict_min_version": "6.999",
+            "strict_max_version": "8.*"
+        }
+    }
+}

@@ -1,0 +1,305 @@
+/* ── Metadata Filler Dialog Styles ────────────────────────── */
+
+#mf-root {
+    padding: 12px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+}
+
+#mf-header {
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #ccc;
+}
+
+#mf-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+#mf-step-indicator {
+    font-size: 12px;
+    color: #666;
+    background: #f0f0f0;
+    padding: 3px 10px;
+    border-radius: 10px;
+}
+
+/* ── Steps ─────────────────────────────────────────────── */
+
+.mf-step {
+    overflow: hidden;
+}
+
+.mf-description {
+    margin: 4px 0 10px;
+    color: #555;
+    font-size: 12.5px;
+    line-height: 1.4;
+}
+
+.mf-subhead {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    color: #444 !important;
+    margin-bottom: 4px !important;
+}
+
+/* ── Scroll panels ─────────────────────────────────────── */
+
+.mf-scroll-panel {
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    padding: 6px;
+}
+
+/* ── Buttons ───────────────────────────────────────────── */
+
+.mf-btn-primary,
+.mf-btn-secondary,
+.mf-btn-sm {
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 12.5px;
+    cursor: pointer;
+    margin: 4px;
+}
+
+.mf-btn-primary {
+    background: #2563eb;
+    color: #fff;
+    font-weight: 600;
+}
+.mf-btn-primary:hover { background: #1d4ed8; }
+.mf-btn-primary:disabled { background: #93c5fd; cursor: default; }
+
+.mf-btn-secondary {
+    background: #e5e7eb;
+    color: #374151;
+}
+.mf-btn-secondary:hover { background: #d1d5db; }
+
+.mf-btn-sm {
+    padding: 3px 10px;
+    font-size: 11px;
+    background: #f3f4f6;
+    color: #374151;
+}
+.mf-btn-sm:hover { background: #e5e7eb; }
+
+/* ── Checkboxes in config ──────────────────────────────── */
+
+.mf-check-item {
+    display: flex;
+    align-items: center;
+    padding: 3px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12.5px;
+}
+.mf-check-item:hover {
+    background: #f0f4ff;
+}
+.mf-check-item input[type="checkbox"] {
+    margin-right: 6px;
+}
+.mf-check-item.active {
+    background: #dbeafe;
+    font-weight: 500;
+}
+
+/* ── Results table ─────────────────────────────────────── */
+
+.mf-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.mf-table th {
+    background: #f8f9fa;
+    text-align: left;
+    padding: 6px 8px;
+    font-weight: 600;
+    font-size: 11px;
+    color: #555;
+    border-bottom: 2px solid #dee2e6;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.mf-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+}
+.mf-table tr:hover td {
+    background: #f8f9ff;
+}
+.mf-table tr.no-pdf td {
+    color: #999;
+}
+
+.mf-missing-badge {
+    display: inline-block;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin: 1px 2px;
+}
+
+.mf-pdf-yes { color: #16a34a; font-weight: 600; }
+.mf-pdf-no  { color: #dc2626; font-weight: 600; }
+
+/* ── Review cards ──────────────────────────────────────── */
+
+.mf-review-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    padding: 10px 14px;
+    background: #fafbfc;
+}
+.mf-review-card.accepted {
+    border-color: #86efac;
+    background: #f0fdf4;
+}
+.mf-review-card.rejected {
+    border-color: #fca5a5;
+    background: #fef2f2;
+    opacity: 0.7;
+}
+
+.mf-review-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.mf-review-card-title {
+    font-weight: 600;
+    font-size: 13px;
+}
+.mf-review-card-type {
+    font-size: 11px;
+    color: #666;
+    background: #f0f0f0;
+    padding: 1px 8px;
+    border-radius: 8px;
+}
+
+.mf-review-field {
+    display: flex;
+    align-items: flex-start;
+    padding: 4px 0;
+    font-size: 12px;
+    border-bottom: 1px solid #f0f0f0;
+}
+.mf-review-field:last-child {
+    border-bottom: none;
+}
+.mf-review-field-label {
+    width: 140px;
+    min-width: 140px;
+    font-weight: 500;
+    color: #555;
+}
+.mf-review-field-value {
+    flex: 1;
+    color: #16a34a;
+    font-weight: 500;
+    word-break: break-word;
+}
+.mf-review-field-check {
+    margin-left: 8px;
+}
+
+.mf-review-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 6px;
+}
+.mf-btn-accept {
+    background: #16a34a;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.mf-btn-accept:hover { background: #15803d; }
+
+.mf-btn-reject {
+    background: #dc2626;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.mf-btn-reject:hover { background: #b91c1c; }
+
+/* ── Processing ────────────────────────────────────────── */
+
+#processing-title {
+    margin: 0 0 12px;
+}
+#processing-status {
+    color: #555;
+    font-size: 12.5px;
+}
+#processing-log {
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Status bar ────────────────────────────────────────── */
+
+#mf-statusbar {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #eee;
+    font-size: 11px;
+    color: #888;
+    min-height: 18px;
+}
+
+/* ── Config hints ──────────────────────────────────────── */
+
+.mf-hint {
+    font-size: 10.5px;
+    color: #888;
+    margin-left: 6px;
+}
+
+/* ── Groupbox overrides ────────────────────────────────── */
+
+groupbox {
+    margin: 6px 0;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+groupbox > label:first-child {
+    font-weight: 600;
+    font-size: 12px;
+    color: #333;
+    margin-bottom: 6px;
+}
+
+/* ── Error message in review card ──────────────────────── */
+
+.mf-review-error {
+    color: #dc2626;
+    font-size: 12px;
+    font-style: italic;
+    padding: 4px 0;
+}

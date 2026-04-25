@@ -1,0 +1,77 @@
+name: Build XPI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from manifest
+        id: meta
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          NAME=$(jq -r '.applications.zotero.id' manifest.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "addon_id=$NAME" >> "$GITHUB_OUTPUT"
+          echo "xpi_name=metadata-filler-$VERSION.xpi" >> "$GITHUB_OUTPUT"
+
+      - name: Build .xpi
+        run: |
+          set -eux
+          rm -f *.xpi
+          # The .xpi is just a zip of the addon root (manifest.json must be at top level).
+          zip -r "${{ steps.meta.outputs.xpi_name }}" \
+            manifest.json \
+            bootstrap.js \
+            lib/ \
+            content/ \
+            locale/ \
+            -x "*.DS_Store" "*/.DS_Store"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: metadata-filler-xpi
+          path: ${{ steps.meta.outputs.xpi_name }}
+          if-no-files-found: error
+
+      - name: Generate update.json (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cat > update.json <<EOF
+          {
+            "addons": {
+              "${{ steps.meta.outputs.addon_id }}": {
+                "updates": [
+                  {
+                    "version": "${{ steps.meta.outputs.version }}",
+                    "update_link": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.meta.outputs.xpi_name }}",
+                    "applications": {
+                      "zotero": { "strict_min_version": "6.999" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+          EOF
+
+      - name: Publish release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.meta.outputs.xpi_name }}
+            update.json
+          generate_release_notes: true

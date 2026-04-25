@@ -1,0 +1,274 @@
+<?xml version="1.0"?>
+<?xml-stylesheet href="chrome://global/skin/" type="text/css"?>
+<?xml-stylesheet href="chrome://metadata-filler/content/main.css" type="text/css"?>
+
+<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+        xmlns:html="http://www.w3.org/1999/xhtml"
+        title="Metadata Filler"
+        width="960" height="720"
+        onload="onLoad()">
+
+    <script type="application/javascript">
+    <![CDATA[
+        function onLoad() {
+            try {
+                // Get Zotero and Services from the opener (main Zotero window)
+                var Zotero = window.opener.Zotero
+                    || window.arguments[0].Zotero
+                    || Components.classes["@zotero.org/Zotero;1"]
+                        .getService(Components.interfaces.nsISupports).wrappedJSObject;
+
+                // Make Zotero available globally in this window
+                window.Zotero = Zotero;
+
+                Zotero.debug("Metadata Filler Dialog: onLoad fired");
+
+                // Services should be available in chrome windows
+                var svc = window.Services
+                    || Components.utils.import("resource://gre/modules/Services.jsm").Services;
+
+                var args = window.arguments[0];
+                var scripts = [
+                    "chrome://metadata-filler-lib/content/fieldMappings.js",
+                    "chrome://metadata-filler-lib/content/scanner.js",
+                    "chrome://metadata-filler-lib/content/pdfProcessor.js",
+                    "chrome://metadata-filler-lib/content/llmClient.js",
+                    "chrome://metadata-filler/content/main.js"
+                ];
+                for (var i = 0; i < scripts.length; i++) {
+                    Zotero.debug("Metadata Filler Dialog: loading " + scripts[i]);
+                    svc.scriptloader.loadSubScript(scripts[i], window);
+                }
+
+                Zotero.debug("Metadata Filler Dialog: all scripts loaded, initialising");
+                MetadataFillerDialog.init(args);
+            }
+            catch (e) {
+                var msg = "Metadata Filler error:\n" + e + "\n\n" + (e.stack || "");
+                try { window.opener.Zotero.debug("Metadata Filler Dialog ERROR: " + msg); } catch(x) {}
+                var el = document.getElementById("mf-error");
+                if (el) {
+                    el.textContent = msg;
+                    el.style.display = "block";
+                }
+            }
+        }
+    ]]>
+    </script>
+
+    <vbox flex="1" id="mf-root">
+
+        <html:pre id="mf-error" style="display:none; color:#dc2626; font-size:13px; padding:20px; white-space:pre-wrap;"></html:pre>
+
+        <hbox id="mf-header" align="center">
+            <html:h2 id="mf-title">Metadata Filler</html:h2>
+            <spacer flex="1"/>
+            <html:span id="mf-step-indicator"></html:span>
+        </hbox>
+
+        <!-- Step 1: Configure -->
+        <vbox id="step-configure" class="mf-step" flex="1">
+            <html:p class="mf-description">
+                Select which item types to scan and which metadata fields to check for each type.
+                Items missing the selected fields will be candidates for AI-powered metadata extraction.
+            </html:p>
+
+            <groupbox>
+                <label value="AI Provider"/>
+                <hbox align="center">
+                    <label value="Provider:"/>
+                    <menulist id="cfg-provider" style="min-width: 160px">
+                        <menupopup>
+                            <menuitem label="OpenAI" value="openai"/>
+                            <menuitem label="Anthropic" value="anthropic"/>
+                            <menuitem label="Google Gemini" value="google"/>
+                            <menuitem label="OpenAI-Compatible" value="custom"/>
+                        </menupopup>
+                    </menulist>
+                    <label value="API Key:"/>
+                    <html:input id="cfg-apikey" type="password" style="flex: 1; min-width: 160px;"/>
+                    <label value="Model:"/>
+                    <html:input id="cfg-model" type="text" style="width: 180px;"/>
+                    <html:span class="mf-hint" id="cfg-model-hint"></html:span>
+                </hbox>
+                <hbox id="cfg-custom-endpoint-row" align="center" style="margin-top: 4px;" hidden="true">
+                    <label value="Endpoint URL:"/>
+                    <html:input id="cfg-custom-endpoint" type="text" placeholder="https://api.example.com/v1/chat/completions" style="flex: 1; min-width: 300px;"/>
+                    <html:span class="mf-hint">Must be OpenAI-compatible (chat/completions)</html:span>
+                </hbox>
+                <hbox align="center" style="margin-top: 4px;">
+                    <html:input type="checkbox" id="cfg-send-images" checked="true"/>
+                    <html:label for="cfg-send-images" style="font-size: 12px; cursor: pointer;">
+                        Send first two pages as images for visual analysis (better results, higher API cost)
+                    </html:label>
+                </hbox>
+
+                <html:details style="margin-top:8px;">
+                    <html:summary style="cursor:pointer; font-size:12px; color:#4338ca;">Advanced — system prompt &amp; request body overrides</html:summary>
+                    <html:div style="margin-top:8px; padding:8px; border:1px solid #e5e7eb; border-radius:4px; background:#fafafa;">
+                        <html:p style="font-size:11px; color:#555; margin:0 0 6px 0;">
+                            Tweak the prompt or override request-body fields per provider. Useful when a model
+                            ships with new parameter names (e.g. <html:code>max_completion_tokens</html:code>)
+                            or when self-fixing a custom endpoint. Body overrides are JSON merged into the
+                            outgoing request — set a key to <html:code>null</html:code> to remove it.
+                            Placeholders in the prompt: <html:code>{itemTypeLabel}</html:code> and <html:code>{fieldList}</html:code>.
+                        </html:p>
+
+                        <hbox align="center" style="margin-top:4px;">
+                            <label value="System prompt:" style="font-size:11px; min-width:120px;"/>
+                            <html:button id="cfg-prompt-save" class="mf-btn-sm">Save</html:button>
+                            <html:button id="cfg-prompt-restore" class="mf-btn-sm">Restore default</html:button>
+                            <html:span id="cfg-prompt-status" class="mf-hint" style="margin-left:8px;"></html:span>
+                        </hbox>
+                        <html:textarea id="cfg-system-prompt" rows="8" style="width:100%; font-family:monospace; font-size:11px; margin-top:4px;"></html:textarea>
+
+                        <hbox align="center" style="margin-top:8px;">
+                            <label value="Request body overrides (JSON):" style="font-size:11px; min-width:200px;"/>
+                            <label value="Provider:" style="font-size:11px;"/>
+                            <html:span id="cfg-overrides-provider-label" style="font-size:11px; font-weight:600; margin-left:4px;"></html:span>
+                            <spacer flex="1"/>
+                            <html:button id="cfg-overrides-save" class="mf-btn-sm">Save</html:button>
+                            <html:button id="cfg-overrides-clear" class="mf-btn-sm">Clear</html:button>
+                            <html:span id="cfg-overrides-status" class="mf-hint" style="margin-left:8px;"></html:span>
+                        </hbox>
+                        <html:textarea id="cfg-body-overrides" rows="5" placeholder='e.g. {"max_completion_tokens": 4096, "max_tokens": null, "temperature": null}' style="width:100%; font-family:monospace; font-size:11px; margin-top:4px;"></html:textarea>
+                    </html:div>
+                </html:details>
+
+                <html:details style="margin-top:8px;">
+                    <html:summary style="cursor:pointer; font-size:12px; color:#4338ca;">Recent Quick Fill activity</html:summary>
+                    <html:div style="margin-top:6px;">
+                        <hbox align="center">
+                            <html:span class="mf-hint">Logs from the right-click "Quick Fill" action (most recent last).</html:span>
+                            <spacer flex="1"/>
+                            <html:button id="cfg-quickfill-refresh" class="mf-btn-sm">Refresh</html:button>
+                            <html:button id="cfg-quickfill-clear" class="mf-btn-sm">Clear</html:button>
+                        </hbox>
+                        <html:pre id="cfg-quickfill-log" style="margin-top:4px; max-height:160px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;"></html:pre>
+                    </html:div>
+                </html:details>
+            </groupbox>
+
+            <groupbox flex="1" style="overflow: hidden;">
+                <label value="Item Types and Fields to Check"/>
+                <hbox align="center" style="margin-bottom: 6px;">
+                    <html:input type="checkbox" id="cfg-scan-orphans" checked="true"/>
+                    <html:label for="cfg-scan-orphans" style="font-size: 12px; cursor: pointer;">
+                        Also scan for standalone PDFs with no parent item (AI will suggest item type + metadata)
+                    </html:label>
+                </hbox>
+                <hbox flex="1" style="overflow: hidden;">
+                    <vbox style="width: 220px; min-width: 180px; overflow: hidden;">
+                        <hbox align="center">
+                            <label value="Item Types" class="mf-subhead" style="flex:1;"/>
+                            <html:a id="cfg-select-all-types" href="#" style="font-size:11px; margin-right:6px;">all</html:a>
+                            <html:a id="cfg-deselect-all-types" href="#" style="font-size:11px;">none</html:a>
+                        </hbox>
+                        <html:div id="cfg-type-list" class="mf-scroll-panel" style="flex: 1; overflow-y: auto;"></html:div>
+                    </vbox>
+                    <vbox flex="1" style="margin-left: 12px; overflow: hidden;">
+                        <hbox align="center">
+                            <label value="Fields to check (all types):" class="mf-subhead" style="flex:1;"/>
+                            <html:a id="cfg-select-all-fields" href="#" style="font-size:11px; margin-right:6px;">all</html:a>
+                            <html:a id="cfg-deselect-all-fields" href="#" style="font-size:11px;">none</html:a>
+                        </hbox>
+                        <html:div id="cfg-field-list" class="mf-scroll-panel" style="flex: 1; overflow-y: auto;"></html:div>
+                    </vbox>
+                </hbox>
+            </groupbox>
+
+            <hbox pack="end" style="margin-top: 4px;">
+                <html:button id="btn-scan" class="mf-btn-primary">Scan Library</html:button>
+            </hbox>
+        </vbox>
+
+        <!-- Step 2: Scan Results -->
+        <vbox id="step-results" class="mf-step" hidden="true" flex="1">
+            <html:p class="mf-description">
+                <html:span id="results-summary"></html:span>
+                Select items to process with AI. Items without PDF attachments are shown but cannot be processed.
+            </html:p>
+
+            <hbox>
+                <html:button id="btn-select-all-items" class="mf-btn-sm">Select All with PDF</html:button>
+                <html:button id="btn-deselect-all-items" class="mf-btn-sm">Deselect All</html:button>
+                <spacer flex="1"/>
+                <html:input id="results-filter" type="text" placeholder="Filter by title..." style="width: 250px;"/>
+            </hbox>
+
+            <html:div id="results-table-container" class="mf-scroll-panel" style="flex: 1;">
+                <html:table id="results-table" class="mf-table">
+                    <html:thead>
+                        <html:tr>
+                            <html:th style="width:40px;">
+                                <html:input type="checkbox" id="results-check-all"/>
+                            </html:th>
+                            <html:th>Title</html:th>
+                            <html:th style="width:140px;">Type</html:th>
+                            <html:th style="width:200px;">Missing Fields</html:th>
+                            <html:th style="width:60px;">PDF</html:th>
+                        </html:tr>
+                    </html:thead>
+                    <html:tbody id="results-tbody"></html:tbody>
+                </html:table>
+            </html:div>
+
+            <hbox pack="end">
+                <html:button id="btn-back-to-config" class="mf-btn-secondary">Back</html:button>
+                <html:button id="btn-process" class="mf-btn-primary">Process Selected with AI</html:button>
+            </hbox>
+        </vbox>
+
+        <!-- Step 3: Processing -->
+        <vbox id="step-processing" class="mf-step" hidden="true" flex="1" align="center" pack="center">
+            <html:h3 id="processing-title">Processing...</html:h3>
+            <html:div id="processing-progress-container" style="width: 80%; max-width: 500px;">
+                <html:progress id="processing-progress" max="100" value="0" style="width: 100%;"></html:progress>
+            </html:div>
+            <html:p id="processing-status">Preparing...</html:p>
+            <html:div id="processing-log" class="mf-scroll-panel" style="width: 90%; height: 200px; font-family: monospace; font-size: 11px;"></html:div>
+            <hbox>
+                <html:button id="btn-cancel-processing" class="mf-btn-secondary">Cancel</html:button>
+                <html:button id="btn-download-log" class="mf-btn-sm" style="margin-left: 8px;">Download Log</html:button>
+            </hbox>
+        </vbox>
+
+        <!-- Step 4: Review -->
+        <vbox id="step-review" class="mf-step" hidden="true" flex="1">
+            <html:p class="mf-description">
+                Review the proposed metadata changes below. Accept or reject each change individually,
+                or use the bulk actions. Changes will only be applied when you confirm.
+            </html:p>
+
+            <hbox>
+                <html:button id="btn-accept-all" class="mf-btn-primary">Accept All Changes</html:button>
+                <html:button id="btn-reject-all" class="mf-btn-secondary">Reject All</html:button>
+                <spacer flex="1"/>
+                <html:span id="review-summary"></html:span>
+            </hbox>
+
+            <html:div id="review-container" class="mf-scroll-panel" style="flex: 1;"></html:div>
+
+            <hbox pack="end">
+                <html:button id="btn-back-to-results" class="mf-btn-secondary">Back to Results</html:button>
+                <html:button id="btn-apply" class="mf-btn-primary">Apply Accepted Changes</html:button>
+            </hbox>
+        </vbox>
+
+        <!-- Step 5: Done -->
+        <vbox id="step-done" class="mf-step" hidden="true" flex="1" align="center" pack="center">
+            <html:h3>Metadata Updated</html:h3>
+            <html:p id="done-summary"></html:p>
+            <hbox>
+                <html:button id="btn-start-over" class="mf-btn-secondary">Start Over</html:button>
+                <html:button id="btn-close" class="mf-btn-primary">Close</html:button>
+            </hbox>
+        </vbox>
+
+        <!-- Status bar -->
+        <hbox id="mf-statusbar" align="center">
+            <html:span id="mf-status"></html:span>
+        </hbox>
+
+    </vbox>
+</window>

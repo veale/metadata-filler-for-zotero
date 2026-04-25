@@ -1,0 +1,4 @@
+*.xpi
+_xpi_extracted/
+.DS_Store
+node_modules/

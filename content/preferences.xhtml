@@ -1,0 +1,144 @@
+<?xml version="1.0"?>
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml"
+      onload="MetadataFillerPrefs.init()">
+
+    <script type="application/javascript">
+    <![CDATA[
+        var MetadataFillerPrefs = {
+            init() {
+                this._load();
+                document.getElementById("pref-provider").addEventListener("command", () => this._onProviderChange());
+                document.getElementById("pref-save").addEventListener("click", () => this._save());
+            },
+
+            _load() {
+                const provider = Zotero.Prefs.get("extensions.metadata-filler.provider") || "openai";
+                document.getElementById("pref-provider").value = provider;
+
+                for (const p of ["openai", "anthropic", "google"]) {
+                    const key = Zotero.Prefs.get(`extensions.metadata-filler.${p}.apiKey`) || "";
+                    const model = Zotero.Prefs.get(`extensions.metadata-filler.${p}.model`) || "";
+                    const custom = Zotero.Prefs.get(`extensions.metadata-filler.${p}.customModel`) || "";
+
+                    document.getElementById(`pref-${p}-apikey`).value = key;
+                    document.getElementById(`pref-${p}-model`).value = custom || model;
+                }
+
+                document.getElementById("pref-concurrency").value =
+                    Zotero.Prefs.get("extensions.metadata-filler.concurrency") || 3;
+                document.getElementById("pref-maxtokens").value =
+                    Zotero.Prefs.get("extensions.metadata-filler.maxTokens") || 2048;
+
+                this._onProviderChange();
+            },
+
+            _onProviderChange() {
+                const provider = document.getElementById("pref-provider").value;
+                for (const p of ["openai", "anthropic", "google"]) {
+                    document.getElementById(`pref-${p}-group`).hidden = (p !== provider);
+                }
+            },
+
+            _save() {
+                const provider = document.getElementById("pref-provider").value;
+                Zotero.Prefs.set("extensions.metadata-filler.provider", provider);
+
+                for (const p of ["openai", "anthropic", "google"]) {
+                    const key = document.getElementById(`pref-${p}-apikey`).value.trim();
+                    const model = document.getElementById(`pref-${p}-model`).value.trim();
+
+                    Zotero.Prefs.set(`extensions.metadata-filler.${p}.apiKey`, key);
+
+                    const defaults = { openai: "gpt-4o", anthropic: "claude-sonnet-4-20250514", google: "gemini-2.0-flash" };
+                    if (model && model !== defaults[p]) {
+                        Zotero.Prefs.set(`extensions.metadata-filler.${p}.customModel`, model);
+                    } else {
+                        Zotero.Prefs.set(`extensions.metadata-filler.${p}.customModel`, "");
+                    }
+                }
+
+                const conc = parseInt(document.getElementById("pref-concurrency").value) || 3;
+                Zotero.Prefs.set("extensions.metadata-filler.concurrency", Math.max(1, Math.min(10, conc)));
+
+                const mt = parseInt(document.getElementById("pref-maxtokens").value) || 2048;
+                Zotero.Prefs.set("extensions.metadata-filler.maxTokens", Math.max(256, Math.min(8192, mt)));
+            },
+        };
+    ]]>
+    </script>
+
+    <groupbox>
+        <label><html:strong>AI Provider</html:strong></label>
+        <hbox align="center">
+            <label value="Default provider:"/>
+            <menulist id="pref-provider">
+                <menupopup>
+                    <menuitem label="OpenAI" value="openai"/>
+                    <menuitem label="Anthropic" value="anthropic"/>
+                    <menuitem label="Google Gemini" value="google"/>
+                </menupopup>
+            </menulist>
+        </hbox>
+    </groupbox>
+
+    <!-- OpenAI -->
+    <groupbox id="pref-openai-group">
+        <label><html:strong>OpenAI Settings</html:strong></label>
+        <hbox align="center">
+            <label value="API Key:" style="width:80px;"/>
+            <html:input id="pref-openai-apikey" type="password" style="flex:1; min-width:250px;"/>
+        </hbox>
+        <hbox align="center">
+            <label value="Model:" style="width:80px;"/>
+            <html:input id="pref-openai-model" type="text" placeholder="gpt-4o" style="width:250px;"/>
+            <label value="(default: gpt-4o)" style="color:#888; font-size:11px;"/>
+        </hbox>
+    </groupbox>
+
+    <!-- Anthropic -->
+    <groupbox id="pref-anthropic-group" hidden="true">
+        <label><html:strong>Anthropic Settings</html:strong></label>
+        <hbox align="center">
+            <label value="API Key:" style="width:80px;"/>
+            <html:input id="pref-anthropic-apikey" type="password" style="flex:1; min-width:250px;"/>
+        </hbox>
+        <hbox align="center">
+            <label value="Model:" style="width:80px;"/>
+            <html:input id="pref-anthropic-model" type="text" placeholder="claude-sonnet-4-20250514" style="width:250px;"/>
+            <label value="(default: claude-sonnet-4-20250514)" style="color:#888; font-size:11px;"/>
+        </hbox>
+    </groupbox>
+
+    <!-- Google -->
+    <groupbox id="pref-google-group" hidden="true">
+        <label><html:strong>Google Gemini Settings</html:strong></label>
+        <hbox align="center">
+            <label value="API Key:" style="width:80px;"/>
+            <html:input id="pref-google-apikey" type="password" style="flex:1; min-width:250px;"/>
+        </hbox>
+        <hbox align="center">
+            <label value="Model:" style="width:80px;"/>
+            <html:input id="pref-google-model" type="text" placeholder="gemini-2.0-flash" style="width:250px;"/>
+            <label value="(default: gemini-2.0-flash)" style="color:#888; font-size:11px;"/>
+        </hbox>
+    </groupbox>
+
+    <groupbox>
+        <label><html:strong>Processing</html:strong></label>
+        <hbox align="center">
+            <label value="Concurrent requests:" style="width:150px;"/>
+            <html:input id="pref-concurrency" type="number" min="1" max="10" style="width:60px;"/>
+            <label value="(1–10, default 3)" style="color:#888; font-size:11px;"/>
+        </hbox>
+        <hbox align="center">
+            <label value="Max response tokens:" style="width:150px;"/>
+            <html:input id="pref-maxtokens" type="number" min="256" max="8192" style="width:80px;"/>
+            <label value="(256–8192, default 2048)" style="color:#888; font-size:11px;"/>
+        </hbox>
+    </groupbox>
+
+    <hbox pack="end" style="margin-top: 8px;">
+        <html:button id="pref-save" style="padding: 4px 16px;">Save</html:button>
+    </hbox>
+</vbox>
