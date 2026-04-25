@@ -60,7 +60,7 @@
 
     <vbox flex="1" id="mf-root">
 
-        <html:pre id="mf-error" style="display:none; color:#dc2626; font-size:13px; padding:20px; white-space:pre-wrap;"></html:pre>
+        <html:pre id="mf-error" style="display:none; color:#dc2626; font-size:13px; padding:20px; white-space:pre-wrap; user-select:text; -moz-user-select:text; cursor:text;"></html:pre>
 
         <hbox id="mf-header" align="center">
             <html:h2 id="mf-title">Metadata Filler</html:h2>
@@ -68,8 +68,10 @@
             <html:span id="mf-step-indicator"></html:span>
         </hbox>
 
-        <!-- Step 1: Configure -->
-        <vbox id="step-configure" class="mf-step" flex="1">
+        <!-- Step 1: Configure. The vbox needs an explicit overflow-y because
+             with all the new advanced sections the content can exceed the
+             dialog height, and XUL vboxes don't scroll by default. -->
+        <vbox id="step-configure" class="mf-step" flex="1" style="overflow-y: auto; min-height: 0;">
             <html:p class="mf-description">
                 Select which item types to scan and which metadata fields to check for each type.
                 Items missing the selected fields will be candidates for AI-powered metadata extraction.
@@ -109,7 +111,11 @@
                     <html:span class="mf-hint" id="cfg-apple-hint" style="margin-top: 2px;">
                         Requires Apple Silicon Mac, macOS 26+, Apple Intelligence enabled. No API key needed; images are not sent (text-only model). Click <html:b>Build helper now</html:b> to compile from the bundled <html:code>fm-helper/</html:code> source (Xcode CLI tools required).
                     </html:span>
-                    <html:pre id="cfg-apple-status" style="display:none; margin-top:6px; max-height:240px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;"></html:pre>
+                    <hbox id="cfg-apple-status-actions" align="center" style="display:none; margin-top:4px;">
+                        <spacer flex="1"/>
+                        <html:button id="cfg-apple-status-copy" class="mf-btn-sm">Copy</html:button>
+                    </hbox>
+                    <html:pre id="cfg-apple-status" style="display:none; margin-top:6px; max-height:240px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap; user-select:text; -moz-user-select:text; cursor:text;"></html:pre>
                 </vbox>
                 <hbox align="center" style="margin-top: 4px;">
                     <html:input type="checkbox" id="cfg-send-images" checked="true"/>
@@ -202,7 +208,7 @@
                             <html:button id="cfg-quickfill-refresh" class="mf-btn-sm">Refresh</html:button>
                             <html:button id="cfg-quickfill-clear" class="mf-btn-sm">Clear</html:button>
                         </hbox>
-                        <html:pre id="cfg-quickfill-log" style="margin-top:4px; max-height:160px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;"></html:pre>
+                        <html:pre id="cfg-quickfill-log" style="margin-top:4px; max-height:160px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap; user-select:text; -moz-user-select:text; cursor:text;"></html:pre>
                     </html:div>
                 </html:details>
 
@@ -216,7 +222,7 @@
                             <html:button id="cfg-rawresp-copy" class="mf-btn-sm">Copy</html:button>
                             <html:button id="cfg-rawresp-clear" class="mf-btn-sm">Clear</html:button>
                         </hbox>
-                        <html:pre id="cfg-rawresp" style="margin-top:4px; max-height:200px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;"></html:pre>
+                        <html:pre id="cfg-rawresp" style="margin-top:4px; max-height:200px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap; user-select:text; -moz-user-select:text; cursor:text;"></html:pre>
                     </html:div>
                 </html:details>
             </groupbox>

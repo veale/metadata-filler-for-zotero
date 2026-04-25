@@ -342,18 +342,37 @@ var MetadataFillerDialog = {
         var appleBuildBtn = document.getElementById("cfg-apple-helper-build");
         var appleHint = document.getElementById("cfg-apple-hint");
         var appleStatus = document.getElementById("cfg-apple-status");
+        var appleStatusActions = document.getElementById("cfg-apple-status-actions");
         var showAppleStatus = function(text) {
             if (!appleStatus) return;
             appleStatus.style.display = "";
+            if (appleStatusActions) appleStatusActions.style.display = "";
             appleStatus.textContent = text;
             appleStatus.scrollTop = appleStatus.scrollHeight;
         };
         var appendAppleStatus = function(line) {
             if (!appleStatus) return;
             appleStatus.style.display = "";
+            if (appleStatusActions) appleStatusActions.style.display = "";
             appleStatus.textContent = (appleStatus.textContent ? appleStatus.textContent + "\n" : "") + line;
             appleStatus.scrollTop = appleStatus.scrollHeight;
         };
+        var appleCopyBtn = document.getElementById("cfg-apple-status-copy");
+        if (appleCopyBtn) {
+            appleCopyBtn.addEventListener("click", function() {
+                try {
+                    var text = appleStatus ? appleStatus.textContent : "";
+                    Components.classes["@mozilla.org/widget/clipboardhelper;1"]
+                        .getService(Components.interfaces.nsIClipboardHelper)
+                        .copyString(text);
+                    appleCopyBtn.textContent = "Copied ✓";
+                    setTimeout(function(){ appleCopyBtn.textContent = "Copy"; }, 1500);
+                } catch (e) {
+                    appleCopyBtn.textContent = "Copy failed";
+                    setTimeout(function(){ appleCopyBtn.textContent = "Copy"; }, 1500);
+                }
+            });
+        }
         if (appleTestBtn) {
             appleTestBtn.addEventListener("click", async function() {
                 appleHint.textContent = "Testing…";
@@ -1521,7 +1540,7 @@ var MetadataFillerDialog = {
                 if (existing) { existing.remove(); return; }
                 var pre = document.createElement("pre");
                 pre.className = "mf-review-raw";
-                pre.style.cssText = "margin-top:6px; max-height:240px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;";
+                pre.style.cssText = "margin-top:6px; max-height:240px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap; user-select:text; -moz-user-select:text; cursor:text;";
                 pre.textContent = reviewItem.rawResponse;
                 card.appendChild(pre);
             });

@@ -37,15 +37,17 @@ function startup({ id, version, rootURI }) {
         Services.scriptloader.loadSubScript(rootURI + "lib/enrich.js");
         Services.scriptloader.loadSubScript(rootURI + "lib/costEstimator.js");
 
-        // Hand the addon's on-disk root to LLMClient if it's unpacked.
-        // Zotero 7 may load plugins from a packed .xpi (rootURI starts with
-        // "jar:file://"), in which case the source files aren't directly
-        // on disk — that path is handled separately by extracting the
-        // helper source into the data dir. See ensureFmHelperSrcAsync().
+        // Hand the addon location to LLMClient. We pass the rootURI itself
+        // (works for both packed jar:file://...!/ and unpacked file:///...)
+        // so the dialog code can fetch fm-helper source via that URI. We
+        // also pass the unpacked filesystem path when available, as a
+        // shortcut for direct IOUtils reads.
         try {
-            if (typeof LLMClient !== "undefined" && rootURI && rootURI.indexOf("file://") === 0) {
-                var fsPath = decodeURI(rootURI.replace(/^file:\/\//, "").replace(/\/$/, ""));
-                LLMClient._addonRootPath = fsPath;
+            if (typeof LLMClient !== "undefined" && rootURI) {
+                LLMClient._addonRootURI = rootURI;
+                if (rootURI.indexOf("file://") === 0) {
+                    LLMClient._addonRootPath = decodeURI(rootURI.replace(/^file:\/\//, "").replace(/\/$/, ""));
+                }
             }
         } catch(e) {}
         _libsLoaded = true;
@@ -65,70 +67,20 @@ function startup({ id, version, rootURI }) {
     // Auto-install bundled Apple helper on macOS. The .xpi may ship a
     // signed `bin/fm-helper` (only when CI built it on a runner that had
     // the macOS 26 SDK); we copy it to the Zotero data dir, chmod +x, and
-    // strip the quarantine attribute. Best-effort.
+    // strip the quarantine attribute. Best-effort. Source extraction for
+    // "Build helper now" is done lazily inside the dialog (LLMClient.
+    // _ensureFmHelperSrcExtracted) where fetch() has full window-context
+    // semantics, instead of in the bootstrap context where jar:file://
+    // fetches behave inconsistently.
     try {
         if (Zotero.isMac) {
             installAppleHelperAsync(rootURI);
-            // Always extract the fm-helper/ source to a writable location so
-            // the in-dialog "Build helper now" button can compile from disk
-            // regardless of whether the .xpi was unpacked. Without this,
-            // packed-.xpi installs (which is the Zotero 7 default) had no
-            // path that swift could compile against.
-            ensureFmHelperSrcAsync(rootURI);
         }
     } catch(e) {
         log("Apple helper auto-install skipped: " + e);
     }
 
     addToAllWindows();
-}
-
-// Extract fm-helper/{Package.swift, Sources/fm-helper/main.swift} from the
-// addon (whether packed in a .xpi or unpacked on disk) into a writable
-// directory under the Zotero data dir. Idempotent: re-runs each startup
-// but skips writes if the file content is byte-identical.
-async function ensureFmHelperSrcAsync(rootURI) {
-    var dataDir = Zotero.DataDirectory.dir;
-    var destRoot = PathUtils.join(dataDir, "metadata-filler-fm-helper-src");
-    var sourcesDir = PathUtils.join(destRoot, "Sources", "fm-helper");
-    try { await IOUtils.makeDirectory(destRoot, { ignoreExisting: true, createAncestors: true }); } catch(e) {}
-    try { await IOUtils.makeDirectory(sourcesDir, { ignoreExisting: true, createAncestors: true }); } catch(e) {}
-
-    var files = [
-        { url: rootURI + "fm-helper/Package.swift",
-          dest: PathUtils.join(destRoot, "Package.swift") },
-        { url: rootURI + "fm-helper/Sources/fm-helper/main.swift",
-          dest: PathUtils.join(sourcesDir, "main.swift") },
-    ];
-
-    for (var i = 0; i < files.length; i++) {
-        try {
-            // fetch() works on both file:// and jar:file:// URIs in the
-            // Zotero/Firefox WebExtension context, so this handles both
-            // packed and unpacked installs uniformly.
-            var resp = await fetch(files[i].url);
-            if (!resp.ok) {
-                log("fm-helper source missing in this .xpi: " + files[i].url + " (status " + resp.status + ")");
-                return;
-            }
-            var text = await resp.text();
-            var existing = "";
-            try { existing = await IOUtils.readUTF8(files[i].dest); } catch(e) {}
-            if (existing !== text) {
-                await IOUtils.writeUTF8(files[i].dest, text);
-                log("fm-helper source extracted: " + files[i].dest);
-            }
-        } catch(e) {
-            log("fm-helper source extract failed for " + files[i].url + ": " + e);
-            return;
-        }
-    }
-
-    // Hand the resolved source dir to LLMClient so the Build-helper-now
-    // button knows where to point swift build at.
-    try {
-        if (typeof LLMClient !== "undefined") LLMClient._fmHelperSrcDir = destRoot;
-    } catch(e) {}
 }
 
 async function installAppleHelperAsync(rootURI) {
