@@ -681,9 +681,10 @@ var MetadataFillerDialog = {
             return;
         }
 
-        // Check API key
+        // Check API key (not required for on-device or local providers)
         const provider = document.getElementById("cfg-provider").value;
-        if (!LLMClient.getAPIKey(provider)) {
+        const _noKeyNeeded = provider === "apple" || provider === "custom";
+        if (!_noKeyNeeded && !LLMClient.getAPIKey(provider)) {
             this._setStatus("Please enter an API key for the selected provider.");
             return;
         }
