@@ -2,3 +2,9 @@
 _xpi_extracted/
 .DS_Store
 node_modules/
+
+# Swift helper build outputs (built into bin/fm-helper which is also gitignored)
+fm-helper/.build/
+fm-helper/.swiftpm/
+fm-helper/Package.resolved
+bin/

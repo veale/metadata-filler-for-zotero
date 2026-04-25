@@ -33,6 +33,8 @@
                     "chrome://metadata-filler-lib/content/scanner.js",
                     "chrome://metadata-filler-lib/content/pdfProcessor.js",
                     "chrome://metadata-filler-lib/content/llmClient.js",
+                    "chrome://metadata-filler-lib/content/enrich.js",
+                    "chrome://metadata-filler-lib/content/costEstimator.js",
                     "chrome://metadata-filler/content/main.js"
                 ];
                 for (var i = 0; i < scripts.length; i++) {
@@ -83,6 +85,7 @@
                             <menuitem label="Anthropic" value="anthropic"/>
                             <menuitem label="Google Gemini" value="google"/>
                             <menuitem label="OpenAI-Compatible" value="custom"/>
+                            <menuitem id="cfg-provider-apple" label="Apple Intelligence (on-device)" value="apple"/>
                         </menupopup>
                     </menulist>
                     <label value="API Key:"/>
@@ -96,11 +99,55 @@
                     <html:input id="cfg-custom-endpoint" type="text" placeholder="https://api.example.com/v1/chat/completions" style="flex: 1; min-width: 300px;"/>
                     <html:span class="mf-hint">Must be OpenAI-compatible (chat/completions)</html:span>
                 </hbox>
+                <vbox id="cfg-apple-row" style="margin-top: 4px;" hidden="true">
+                    <hbox align="center">
+                        <label value="Helper binary path:"/>
+                        <html:input id="cfg-apple-helper-path" type="text" placeholder="(empty = auto-detect at &lt;Zotero data dir&gt;/fm-helper or addon's bin/fm-helper)" style="flex: 1; min-width: 300px;"/>
+                        <html:button id="cfg-apple-helper-test" class="mf-btn-sm">Test</html:button>
+                        <html:button id="cfg-apple-helper-build" class="mf-btn-sm" style="margin-left: 4px;">Build helper now</html:button>
+                    </hbox>
+                    <html:span class="mf-hint" id="cfg-apple-hint" style="margin-top: 2px;">
+                        Requires Apple Silicon Mac, macOS 26+, Apple Intelligence enabled. No API key needed; images are not sent (text-only model). Click <html:b>Build helper now</html:b> to compile from the bundled <html:code>fm-helper/</html:code> source (Xcode CLI tools required).
+                    </html:span>
+                    <html:pre id="cfg-apple-status" style="display:none; margin-top:6px; max-height:240px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;"></html:pre>
+                </vbox>
                 <hbox align="center" style="margin-top: 4px;">
                     <html:input type="checkbox" id="cfg-send-images" checked="true"/>
                     <html:label for="cfg-send-images" style="font-size: 12px; cursor: pointer;">
-                        Send first two pages as images for visual analysis (better results, higher API cost)
+                        Send first pages as images for visual analysis (better results, higher API cost)
                     </html:label>
+                </hbox>
+                <hbox align="center" style="margin-top: 4px;">
+                    <html:input type="checkbox" id="cfg-doi-shortcut" checked="true"/>
+                    <html:label for="cfg-doi-shortcut" style="font-size: 12px; cursor: pointer;">
+                        DOI shortcut: if a DOI is detected on page 1, fetch from OpenAlex/CrossRef and skip the LLM
+                    </html:label>
+                </hbox>
+                <hbox align="center" style="margin-top: 4px;">
+                    <html:input type="checkbox" id="cfg-force-llm"/>
+                    <html:label for="cfg-force-llm" style="font-size: 12px; cursor: pointer;">
+                        Force LLM (ignore the DOI shortcut, always ask the model)
+                    </html:label>
+                </hbox>
+                <hbox align="center" style="margin-top: 4px;">
+                    <html:input type="checkbox" id="cfg-enrich" checked="true"/>
+                    <html:label for="cfg-enrich" style="font-size: 12px; cursor: pointer;">
+                        Confirm with OpenAlex/CrossRef when LLM returns a DOI; title-search fallback if it doesn't
+                    </html:label>
+                </hbox>
+                <hbox align="center" style="margin-top: 4px;">
+                    <html:input type="checkbox" id="cfg-skip-existing" checked="true"/>
+                    <html:label for="cfg-skip-existing" style="font-size: 12px; cursor: pointer;">
+                        Skip-already-good: don't overwrite a field that already has a non-empty value
+                    </html:label>
+                </hbox>
+                <hbox align="center" style="margin-top: 4px;">
+                    <label value="Pages to read — short doc:" style="font-size:11px;"/>
+                    <html:input id="cfg-pages-short" type="number" min="1" max="10" value="2" style="width:50px;"/>
+                    <label value="long doc (≥" style="font-size:11px;"/>
+                    <html:input id="cfg-pages-threshold" type="number" min="2" max="500" value="50" style="width:60px;"/>
+                    <label value="pages):" style="font-size:11px;"/>
+                    <html:input id="cfg-pages-long" type="number" min="1" max="20" value="4" style="width:50px;"/>
                 </hbox>
 
                 <html:details style="margin-top:8px;">
@@ -132,6 +179,17 @@
                             <html:span id="cfg-overrides-status" class="mf-hint" style="margin-left:8px;"></html:span>
                         </hbox>
                         <html:textarea id="cfg-body-overrides" rows="5" placeholder='e.g. {"max_completion_tokens": 4096, "max_tokens": null, "temperature": null}' style="width:100%; font-family:monospace; font-size:11px; margin-top:4px;"></html:textarea>
+
+                        <hbox align="center" style="margin-top:8px;">
+                            <label value="OpenAlex polite-pool email (optional):" style="font-size:11px; min-width:240px;"/>
+                            <html:input id="cfg-openalex-mailto" type="text" placeholder="you@example.com" style="flex:1;"/>
+                        </hbox>
+                        <hbox align="center" style="margin-top:4px;">
+                            <label value="OpenAlex API key (optional):" style="font-size:11px; min-width:240px;"/>
+                            <html:input id="cfg-openalex-apikey" type="password" style="flex:1;"/>
+                            <html:button id="cfg-openalex-save" class="mf-btn-sm">Save</html:button>
+                        </hbox>
+
                     </html:div>
                 </html:details>
 
@@ -145,6 +203,20 @@
                             <html:button id="cfg-quickfill-clear" class="mf-btn-sm">Clear</html:button>
                         </hbox>
                         <html:pre id="cfg-quickfill-log" style="margin-top:4px; max-height:160px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;"></html:pre>
+                    </html:div>
+                </html:details>
+
+                <html:details style="margin-top:8px;">
+                    <html:summary style="cursor:pointer; font-size:12px; color:#4338ca;">Last raw model response (debug)</html:summary>
+                    <html:div style="margin-top:6px;">
+                        <hbox align="center">
+                            <html:span class="mf-hint">Exact text the model returned on the most recent call (any provider, any flow). Useful for diagnosing parse failures.</html:span>
+                            <spacer flex="1"/>
+                            <html:button id="cfg-rawresp-refresh" class="mf-btn-sm">Refresh</html:button>
+                            <html:button id="cfg-rawresp-copy" class="mf-btn-sm">Copy</html:button>
+                            <html:button id="cfg-rawresp-clear" class="mf-btn-sm">Clear</html:button>
+                        </hbox>
+                        <html:pre id="cfg-rawresp" style="margin-top:4px; max-height:200px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;"></html:pre>
                     </html:div>
                 </html:details>
             </groupbox>
@@ -212,6 +284,12 @@
                     <html:tbody id="results-tbody"></html:tbody>
                 </html:table>
             </html:div>
+
+            <hbox align="center" style="margin-top:6px; padding:6px 8px; background:#f1f5f9; border-radius:4px;">
+                <html:span id="cost-estimate" style="font-size:11px; color:#1e293b;">Click "Estimate cost" to see token / $ estimate.</html:span>
+                <spacer flex="1"/>
+                <html:button id="btn-estimate-cost" class="mf-btn-sm">Estimate cost</html:button>
+            </hbox>
 
             <hbox pack="end">
                 <html:button id="btn-back-to-config" class="mf-btn-secondary">Back</html:button>

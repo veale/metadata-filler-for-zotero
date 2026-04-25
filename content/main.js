@@ -212,6 +212,26 @@ var MetadataFillerDialog = {
         });
         try { this._refreshQuickFillLog(); } catch(e) {}
 
+        // Last raw model response viewer (any provider, any flow)
+        var rrRefresh = $("cfg-rawresp-refresh");
+        var rrCopy = $("cfg-rawresp-copy");
+        var rrClear = $("cfg-rawresp-clear");
+        if (rrRefresh) rrRefresh.addEventListener("click", function(){ self._refreshRawResponse(); });
+        if (rrCopy) rrCopy.addEventListener("click", function() {
+            try {
+                var pre = document.getElementById("cfg-rawresp");
+                var text = pre ? pre.textContent : "";
+                var c = Components.classes["@mozilla.org/widget/clipboardhelper;1"]
+                    .getService(Components.interfaces.nsIClipboardHelper);
+                c.copyString(text);
+            } catch(e) { window.alert("Copy failed: " + e.message); }
+        });
+        if (rrClear) rrClear.addEventListener("click", function() {
+            Zotero.Prefs.set("extensions.metadata-filler.lastRawResponse", "");
+            self._refreshRawResponse();
+        });
+        try { this._refreshRawResponse(); } catch(e) {}
+
         // Send images checkbox
         var sendImgEl = $("cfg-send-images");
         if (sendImgEl) {
@@ -228,6 +248,13 @@ var MetadataFillerDialog = {
         $("btn-deselect-all-items").addEventListener("click", deselAllHandler);
         $("btn-deselect-all-items").addEventListener("command", deselAllHandler);
         $("results-filter").addEventListener("input", (e) => this._filterResults(e.target.value));
+
+        var estBtn = $("btn-estimate-cost");
+        if (estBtn) {
+            var estHandler = () => this._showCostEstimate();
+            estBtn.addEventListener("click", estHandler);
+            estBtn.addEventListener("command", estHandler);
+        }
         $("results-check-all").addEventListener("change", (e) => this._toggleAllResultItems(e.target.checked));
 
         // Review bulk actions — html:buttons should fire click, but add command too for safety
@@ -249,6 +276,20 @@ var MetadataFillerDialog = {
         applyEl.addEventListener("command", applyHandler);
         backResultsEl.addEventListener("click", backResultsHandler);
         backResultsEl.addEventListener("command", backResultsHandler);
+    },
+
+    // ── Raw model response viewer (debug) ─────────────────────
+
+    _refreshRawResponse() {
+        var pre = document.getElementById("cfg-rawresp");
+        if (!pre) return;
+        var raw = "";
+        try { raw = Zotero.Prefs.get("extensions.metadata-filler.lastRawResponse") || ""; } catch(e) {}
+        if (!raw) {
+            pre.textContent = "(no raw response captured yet — run an item through any provider and click Refresh)";
+        } else {
+            pre.textContent = raw;
+        }
     },
 
     // ── Quick Fill log viewer ─────────────────────────────────
@@ -273,16 +314,142 @@ var MetadataFillerDialog = {
     // ── Step 1: Configure ─────────────────────────────────────
 
     _loadProviderPrefs() {
+        // Hide the Apple provider option on non-mac platforms entirely. We
+        // remove the menuitem rather than disabling it so it never appears
+        // for Linux / Windows users — they don't need to wonder what it is
+        // or why it doesn't work.
+        var appleMenuItem = document.getElementById("cfg-provider-apple");
+        if (appleMenuItem && !Zotero.isMac) {
+            appleMenuItem.remove();
+        }
+
         const provider = Zotero.Prefs.get("extensions.metadata-filler.provider") || "openai";
-        document.getElementById("cfg-provider").value = provider;
+        // If the user previously selected apple on a now-non-mac install,
+        // fall back to openai so the dialog doesn't get stuck.
+        var effectiveProvider = (provider === "apple" && !Zotero.isMac) ? "openai" : provider;
+        document.getElementById("cfg-provider").value = effectiveProvider;
         this._onProviderChange();
 
-        // Load send images preference
-        var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages");
-        var sendImgEl = document.getElementById("cfg-send-images");
-        if (sendImgEl) {
-            sendImgEl.checked = (sendImages !== false); // default true
+        // Apple helper path field
+        var appleInput = document.getElementById("cfg-apple-helper-path");
+        if (appleInput) {
+            appleInput.value = Zotero.Prefs.get("extensions.metadata-filler.apple.helperPath") || "";
+            appleInput.addEventListener("change", function() {
+                Zotero.Prefs.set("extensions.metadata-filler.apple.helperPath", appleInput.value.trim());
+            });
         }
+        var appleTestBtn = document.getElementById("cfg-apple-helper-test");
+        var appleBuildBtn = document.getElementById("cfg-apple-helper-build");
+        var appleHint = document.getElementById("cfg-apple-hint");
+        var appleStatus = document.getElementById("cfg-apple-status");
+        var showAppleStatus = function(text) {
+            if (!appleStatus) return;
+            appleStatus.style.display = "";
+            appleStatus.textContent = text;
+            appleStatus.scrollTop = appleStatus.scrollHeight;
+        };
+        var appendAppleStatus = function(line) {
+            if (!appleStatus) return;
+            appleStatus.style.display = "";
+            appleStatus.textContent = (appleStatus.textContent ? appleStatus.textContent + "\n" : "") + line;
+            appleStatus.scrollTop = appleStatus.scrollHeight;
+        };
+        if (appleTestBtn) {
+            appleTestBtn.addEventListener("click", async function() {
+                appleHint.textContent = "Testing…";
+                try {
+                    var r = await LLMClient._resolveAppleHelperPathDetailed();
+                    if (r.path) {
+                        appleHint.textContent = "✓ Helper found at: " + r.path + " (source: " + r.source + ")";
+                        showAppleStatus("");
+                        appleStatus.style.display = "none";
+                    } else {
+                        appleHint.textContent = "✗ Helper not found — see details below.";
+                        showAppleStatus(LLMClient._buildAppleHelperMissingMessage(r));
+                    }
+                } catch (e) {
+                    appleHint.textContent = "Error: " + e.message;
+                }
+            });
+        }
+        if (appleBuildBtn) {
+            appleBuildBtn.addEventListener("click", async function() {
+                appleBuildBtn.disabled = true;
+                appleTestBtn.disabled = true;
+                appleHint.textContent = "Building helper…";
+                showAppleStatus("");
+                try {
+                    var dest = await LLMClient.buildAppleHelper(function(line) {
+                        appendAppleStatus(line);
+                    });
+                    appleHint.textContent = "✓ Helper built at: " + dest;
+                    var input = document.getElementById("cfg-apple-helper-path");
+                    if (input && !input.value) {
+                        // Don't overwrite a user's explicit override; only set
+                        // when the field is empty.
+                        input.value = dest;
+                        Zotero.Prefs.set("extensions.metadata-filler.apple.helperPath", dest);
+                    }
+                } catch (e) {
+                    appleHint.textContent = "✗ Build failed — see details below.";
+                    appendAppleStatus("");
+                    appendAppleStatus(e.message || String(e));
+                } finally {
+                    appleBuildBtn.disabled = false;
+                    appleTestBtn.disabled = false;
+                }
+            });
+        }
+
+        var setChk = (id, prefKey, defaultVal) => {
+            var el = document.getElementById(id);
+            if (!el) return;
+            var v = Zotero.Prefs.get("extensions.metadata-filler." + prefKey);
+            el.checked = (v === undefined || v === null || v === "") ? defaultVal : !!v;
+            el.addEventListener("change", function() {
+                Zotero.Prefs.set("extensions.metadata-filler." + prefKey, el.checked);
+            });
+        };
+        setChk("cfg-send-images",   "sendImages",       true);
+        setChk("cfg-doi-shortcut",  "doiShortcut",      true);
+        setChk("cfg-force-llm",     "forceLLM",         false);
+        setChk("cfg-enrich",        "enrich",           true);
+        setChk("cfg-skip-existing", "skipExisting",     true);
+
+        var setNum = (id, prefKey, defaultVal) => {
+            var el = document.getElementById(id);
+            if (!el) return;
+            var v = Zotero.Prefs.get("extensions.metadata-filler." + prefKey);
+            el.value = (v === undefined || v === null || v === "") ? defaultVal : v;
+            el.addEventListener("change", function() {
+                var n = parseInt(el.value, 10);
+                if (!isNaN(n)) Zotero.Prefs.set("extensions.metadata-filler." + prefKey, n);
+            });
+        };
+        setNum("cfg-pages-short",     "pageRange.short",         2);
+        setNum("cfg-pages-long",      "pageRange.long",          4);
+        setNum("cfg-pages-threshold", "pageRange.longThreshold", 50);
+
+        // OpenAlex mailto / api key
+        var mailto = document.getElementById("cfg-openalex-mailto");
+        if (mailto) {
+            mailto.value = Zotero.Prefs.get("extensions.metadata-filler.openalex.mailto") || "";
+            mailto.addEventListener("change", function() {
+                Zotero.Prefs.set("extensions.metadata-filler.openalex.mailto", mailto.value.trim());
+            });
+        }
+        var oaKey = document.getElementById("cfg-openalex-apikey");
+        var oaSave = document.getElementById("cfg-openalex-save");
+        if (oaKey) {
+            oaKey.value = Zotero.Prefs.get("extensions.metadata-filler.openalex.apiKey") || "";
+        }
+        if (oaSave) {
+            oaSave.addEventListener("click", function() {
+                Zotero.Prefs.set("extensions.metadata-filler.openalex.apiKey", oaKey.value.trim());
+                if (mailto) Zotero.Prefs.set("extensions.metadata-filler.openalex.mailto", mailto.value.trim());
+            });
+        }
+
     },
 
     _onProviderChange() {
@@ -293,18 +460,27 @@ var MetadataFillerDialog = {
         const model = LLMClient.getEffectiveModel(provider);
         const defaultModel = LLMClient.providers[provider].defaultModel;
 
-        document.getElementById("cfg-apikey").value = apiKey;
+        // API key field is hidden / irrelevant for the Apple provider.
+        var apiKeyEl = document.getElementById("cfg-apikey");
+        apiKeyEl.value = apiKey;
+        apiKeyEl.disabled = (provider === "apple");
+        apiKeyEl.placeholder = (provider === "apple") ? "(not used — on-device)" : "";
+
         document.getElementById("cfg-model").value = model;
         document.getElementById("cfg-model-hint").textContent = "(default: " + defaultModel + ")";
 
-        // Show/hide custom endpoint row
         var endpointRow = document.getElementById("cfg-custom-endpoint-row");
-        if (endpointRow) {
-            endpointRow.hidden = (provider !== "custom");
-        }
+        if (endpointRow) endpointRow.hidden = (provider !== "custom");
         var endpointInput = document.getElementById("cfg-custom-endpoint");
         if (endpointInput && provider === "custom") {
             endpointInput.value = Zotero.Prefs.get("extensions.metadata-filler.custom.endpoint") || "";
+        }
+
+        var appleRow = document.getElementById("cfg-apple-row");
+        if (appleRow) appleRow.hidden = (provider !== "apple");
+        if (provider === "apple") {
+            var appleInput = document.getElementById("cfg-apple-helper-path");
+            if (appleInput) appleInput.value = Zotero.Prefs.get("extensions.metadata-filler.apple.helperPath") || "";
         }
     },
 
@@ -665,6 +841,101 @@ var MetadataFillerDialog = {
         }
     },
 
+    // ── Cost estimate ─────────────────────────────────────────
+
+    async _showCostEstimate() {
+        var indices = [...this._selectedForProcessing];
+        var el = document.getElementById("cost-estimate");
+        if (!indices.length) {
+            el.textContent = "(select at least one item to estimate)";
+            return;
+        }
+        var provider = document.getElementById("cfg-provider").value;
+        var model = LLMClient.getEffectiveModel(provider);
+        var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") !== false;
+
+        // We don't want to actually open the PDFs here — too slow. Use a
+        // rough per-item estimate of ~6000 chars of extracted text from the
+        // first pages. Refined estimates would require running PDFProcessor.
+        var charsPerItem = 6000;
+        var items = indices.map(function() { return { textChars: charsPerItem, hasImage: sendImages }; });
+        var est = CostEstimator.estimate({
+            provider: provider,
+            model: model,
+            items: items,
+            expectedOutputTokens: 600,
+        });
+        el.textContent = "Estimate (model=" + model + "): " + CostEstimator.formatEstimate(est);
+    },
+
+    // ── Helpers shared by processing & apply ──────────────────
+
+    _isFieldEmpty(item, zoteroKey, isCreator) {
+        try {
+            if (isCreator) {
+                var existing = item.getCreators();
+                return !existing || existing.length === 0;
+            }
+            var v = item.getField(zoteroKey);
+            return !v || !String(v).trim();
+        } catch (e) {
+            return true;
+        }
+    },
+
+    /**
+     * For a given scanResult and a proposed-data object, partition each
+     * proposed field into one of: "fill" (existing value empty), "diff"
+     * (existing value present, proposed differs) or "same" (proposed equals
+     * existing). Used to drive the review diff view and skip-existing logic.
+     */
+    _classifyChanges(scanResult, proposed) {
+        var out = { fill: [], diff: [], same: [] };
+        var item = scanResult.item;
+        var fieldDefs = scanResult.missingFields || [];
+        // Also classify any extra fields enrichment may have added beyond the
+        // originally-missing set, by scanning the proposed object.
+        var seen = {};
+        for (var i = 0; i < fieldDefs.length; i++) seen[fieldDefs[i].llmKey] = true;
+        var typeKey = scanResult.typeKey;
+        if (typeKey && FieldMappings.types[typeKey]) {
+            var allFields = FieldMappings.getFieldsForType(typeKey);
+            for (var j = 0; j < allFields.length; j++) {
+                if (!seen[allFields[j].llmKey] && proposed[allFields[j].llmKey] !== undefined) {
+                    fieldDefs = fieldDefs.concat([allFields[j]]);
+                    seen[allFields[j].llmKey] = true;
+                }
+            }
+        }
+
+        for (var k = 0; k < fieldDefs.length; k++) {
+            var fd = fieldDefs[k];
+            if (proposed[fd.llmKey] === undefined || proposed[fd.llmKey] === null || proposed[fd.llmKey] === "") continue;
+            var isEmpty = this._isFieldEmpty(item, fd.zotero, !!fd.isCreator);
+            if (isEmpty) {
+                out.fill.push({ fieldDef: fd, proposed: proposed[fd.llmKey] });
+            } else {
+                var existing = "";
+                try {
+                    if (fd.isCreator) {
+                        existing = item.getCreators().map(function(c){ return ((c.firstName||"") + " " + (c.lastName||"")).trim(); }).join("; ");
+                    } else {
+                        existing = item.getField(fd.zotero);
+                    }
+                } catch(e) {}
+                var proposedStr = fd.isCreator && Array.isArray(proposed[fd.llmKey])
+                    ? proposed[fd.llmKey].map(function(c){return ((c.firstName||"") + " " + (c.lastName||"")).trim();}).join("; ")
+                    : String(proposed[fd.llmKey]);
+                if (String(existing).trim() === proposedStr.trim()) {
+                    out.same.push({ fieldDef: fd, proposed: proposed[fd.llmKey], existing: existing });
+                } else {
+                    out.diff.push({ fieldDef: fd, proposed: proposed[fd.llmKey], existing: existing });
+                }
+            }
+        }
+        return out;
+    },
+
     // ── Step 3: Processing ────────────────────────────────────
 
     async _onProcess() {
@@ -681,6 +952,9 @@ var MetadataFillerDialog = {
         const model = LLMClient.getEffectiveModel(provider);
         const maxTokens = Zotero.Prefs.get("extensions.metadata-filler.maxTokens") || 2048;
         const sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") !== false;
+        const doiShortcut = Zotero.Prefs.get("extensions.metadata-filler.doiShortcut") !== false;
+        const forceLLM = !!Zotero.Prefs.get("extensions.metadata-filler.forceLLM");
+        const enrichEnabled = Zotero.Prefs.get("extensions.metadata-filler.enrich") !== false;
 
         const progressBar = document.getElementById("processing-progress");
         const statusEl = document.getElementById("processing-status");
@@ -728,25 +1002,63 @@ var MetadataFillerDialog = {
                     const pdfData = await PDFProcessor.process(attachment);
 
                     // Check if user wants to send images
-                    var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") !== false;
                     var imageToSend = (sendImages && pdfData.imageBase64) ? pdfData.imageBase64 : null;
 
                     var extractInfo = pdfData.text.length + " chars, image: " + (imageToSend ? "yes (sending)" : pdfData.imageBase64 ? "available (not sending)" : "no");
                     var textPreview = pdfData.text.substring(0, 80).replace(/\n/g, " ");
                     this._log(logEl, "  > Extracted " + extractInfo);
                     this._log(logEl, "  > Preview: " + textPreview + "...");
+                    if (pdfData.embedded) {
+                        this._log(logEl, "  > Embedded PDF metadata: " + JSON.stringify(pdfData.embedded).slice(0, 120));
+                    }
                     this._logBuffer.push("  > TEXT SNIPPET (first 500 chars):\n" + pdfData.text.substring(0, 500));
+
+                    // ── DOI shortcut: skip the LLM entirely if we can ──
+                    var detectedDOI = Enrich.extractDOIFromText(pdfData.text.substring(0, 4000));
+                    if (detectedDOI && doiShortcut && !forceLLM && !scanResult.isOrphan) {
+                        this._log(logEl, "  > Detected DOI " + detectedDOI + " — trying OpenAlex shortcut");
+                        var enriched = await Enrich.fetchByDOI(detectedDOI);
+                        if (enriched) {
+                            this._log(logEl, "  > OpenAlex hit (" + (enriched._source || "openalex") + "), skipping LLM");
+                            this._llmResults.push({
+                                scanResult: scanResult,
+                                llmData: enriched,
+                                enrichedFromDOI: true,
+                                source: enriched._source || "openalex",
+                                rawResponse: "[" + (enriched._source || "openalex") + " DOI shortcut — no LLM called]\n\n" + JSON.stringify(enriched, null, 2),
+                                error: null,
+                            });
+                            completed++;
+                            progressBar.value = completed;
+                            return;
+                        }
+                        this._log(logEl, "  > OpenAlex/CrossRef miss; falling back to LLM");
+                    }
 
                     if (scanResult.isOrphan) {
                         // Orphan mode: ask LLM to identify item type + all metadata
                         const orphanResult = await LLMClient.queryOrphan({
                             text: pdfData.text,
                             imageBase64: imageToSend,
+                            embedded: pdfData.embedded,
                             provider,
                             apiKey,
                             model,
                             maxTokens,
                         });
+
+                        // Post-enrich orphan results too if a DOI was extracted
+                        if (enrichEnabled && orphanResult.metadata) {
+                            var orphanDOI = orphanResult.metadata.doi || detectedDOI;
+                            var orphanEnriched = null;
+                            if (orphanDOI) orphanEnriched = await Enrich.fetchByDOI(orphanDOI);
+                            else if (orphanResult.metadata.title) orphanEnriched = await Enrich.searchByTitle(orphanResult.metadata.title);
+                            if (orphanEnriched) {
+                                this._log(logEl, "  > Enriched from " + (orphanEnriched._source || "openalex"));
+                                orphanResult.metadata = Enrich.mergeOver(orphanResult.metadata, orphanEnriched);
+                                this._logBuffer.push("  > ENRICHED METADATA: " + JSON.stringify(orphanResult.metadata, null, 2));
+                            }
+                        }
 
                         const foundCount = Object.keys(orphanResult.metadata).length;
                         this._log(logEl, `  > LLM identified type: ${orphanResult.itemType}, returned ${foundCount} field(s)`);
@@ -760,14 +1072,16 @@ var MetadataFillerDialog = {
                             llmData: orphanResult.metadata,
                             orphanItemType: orphanResult.itemType,
                             isOrphan: true,
+                            rawResponse: LLMClient._lastRawResponse || null,
                             error: null,
                         });
                     } else {
                         // Normal mode: fill missing fields
                         const typeLabel = FieldMappings.types[scanResult.typeKey]?.label || scanResult.typeKey;
-                        const llmData = await LLMClient.query({
+                        var llmData = await LLMClient.query({
                             text: pdfData.text,
                             imageBase64: imageToSend,
+                            embedded: pdfData.embedded,
                             missingFields: scanResult.missingFields,
                             itemTypeLabel: typeLabel,
                             provider,
@@ -776,15 +1090,43 @@ var MetadataFillerDialog = {
                             maxTokens,
                         });
 
-                        const foundCount = Object.keys(llmData).length;
-                        this._log(logEl, `  > LLM returned ${foundCount} field(s)`);
+                        var foundCount = Object.keys(llmData).length;
+                        this._log(logEl, "  > LLM returned " + foundCount + " field(s)");
                         this._logBuffer.push("  > RAW LLM RESPONSE:\n" + (LLMClient._lastRawResponse || "(empty)"));
                         this._logBuffer.push("  > EXPECTED KEYS: " + scanResult.missingFields.map(function(f){return f.llmKey;}).join(", "));
                         if (foundCount > 0) {
                             this._logBuffer.push("  > MATCHED FIELDS: " + JSON.stringify(llmData, null, 2));
                         }
 
-                        this._llmResults.push({ scanResult, llmData, error: null });
+                        // ── Post-LLM enrichment ──
+                        var enrichedSource = null;
+                        if (enrichEnabled) {
+                            var doiToCheck = llmData.doi || detectedDOI;
+                            var enriched = null;
+                            if (doiToCheck) {
+                                enriched = await Enrich.fetchByDOI(doiToCheck);
+                                if (enriched) enrichedSource = enriched._source + ":doi";
+                            }
+                            // Title-search fallback when LLM came back sparse
+                            if (!enriched && foundCount < 2 && llmData.title) {
+                                enriched = await Enrich.searchByTitle(llmData.title);
+                                if (enriched) enrichedSource = enriched._source + ":title-search";
+                            }
+                            if (enriched) {
+                                this._log(logEl, "  > Enriched via " + enrichedSource);
+                                llmData = Enrich.mergeOver(llmData, enriched);
+                                this._logBuffer.push("  > ENRICHED RESULT: " + JSON.stringify(llmData, null, 2));
+                            }
+                        }
+
+                        this._llmResults.push({
+                            scanResult: scanResult,
+                            llmData: llmData,
+                            enrichedFromDOI: !!enrichedSource && enrichedSource.indexOf(":doi") >= 0,
+                            source: enrichedSource ? enrichedSource.split(":")[0] : "llm",
+                            rawResponse: LLMClient._lastRawResponse || null,
+                            error: null,
+                        });
                     }
                 } catch (e) {
                     this._log(logEl, `  X Error: ${e.message}`);
@@ -958,6 +1300,19 @@ var MetadataFillerDialog = {
         const typeBadge = document.createElement("span");
         typeBadge.className = "mf-review-card-type";
 
+        // Source badge — shows whether the data came from the LLM or from
+        // OpenAlex / CrossRef enrichment, so the reviewer can weight trust.
+        if (reviewItem.source && reviewItem.source !== "llm") {
+            var srcBadge = document.createElement("span");
+            srcBadge.className = "mf-review-card-type";
+            srcBadge.style.background = "#dcfce7";
+            srcBadge.style.color = "#166534";
+            srcBadge.style.marginRight = "6px";
+            srcBadge.textContent = "✓ " + reviewItem.source.toUpperCase();
+            srcBadge.title = "Verified via " + reviewItem.source;
+            header.appendChild(srcBadge);
+        }
+
         if (reviewItem.isOrphan) {
             // Show the proposed item type for orphans
             var proposedType = reviewItem.orphanItemType || "document";
@@ -1009,33 +1364,85 @@ var MetadataFillerDialog = {
                 fieldsContainer.appendChild(row);
             }
         } else {
-            // Normal mode: show missing fields
-            for (const fieldDef of scanResult.missingFields) {
-                const value = llmData[fieldDef.llmKey];
-                if (value === undefined || value === null) continue;
+            // Normal mode: classify each proposed field into fill / diff / same
+            // and render with appropriate visual treatment.
+            var classified = this._classifyChanges(scanResult, llmData);
 
-                const row = document.createElement("div");
-                row.className = "mf-review-field";
+            var renderRow = function(entry, kind) {
+                var fd = entry.fieldDef;
+                var row = document.createElement("div");
+                row.className = "mf-review-field mf-review-field-" + kind;
+                row.style.padding = "4px 6px";
+                row.style.borderRadius = "3px";
+                if (kind === "diff") row.style.background = "#fef3c7";
+                else if (kind === "same") { row.style.background = "#f3f4f6"; row.style.opacity = "0.7"; }
 
-                const labelEl = document.createElement("span");
+                var labelEl = document.createElement("span");
                 labelEl.className = "mf-review-field-label";
-                labelEl.textContent = fieldDef.label;
-
-                const valueEl = document.createElement("span");
-                valueEl.className = "mf-review-field-value";
-
-                if (fieldDef.isCreator && Array.isArray(value)) {
-                    valueEl.textContent = value
-                        .map((c) => `${c.firstName || ""} ${c.lastName || ""}`.trim())
-                        .join("; ");
-                } else {
-                    valueEl.textContent = String(value);
-                }
-
+                labelEl.textContent = fd.label + (kind === "diff" ? " ⚠" : kind === "same" ? " =" : "");
                 row.appendChild(labelEl);
-                row.appendChild(valueEl);
-                fieldsContainer.appendChild(row);
+
+                var formatVal = function(v) {
+                    if (fd.isCreator && Array.isArray(v)) {
+                        return v.map(function(c){ return ((c.firstName||"") + " " + (c.lastName||"")).trim(); }).join("; ");
+                    }
+                    return String(v);
+                };
+
+                if (kind === "diff") {
+                    var diffWrap = document.createElement("span");
+                    diffWrap.className = "mf-review-field-value";
+                    var oldSpan = document.createElement("span");
+                    oldSpan.style.cssText = "text-decoration:line-through; color:#9ca3af;";
+                    oldSpan.textContent = String(entry.existing || "(empty)");
+                    var arrow = document.createElement("span");
+                    arrow.style.margin = "0 6px";
+                    arrow.textContent = "→";
+                    var newSpan = document.createElement("span");
+                    newSpan.style.cssText = "color:#92400e; font-weight:600;";
+                    newSpan.textContent = formatVal(entry.proposed);
+                    diffWrap.appendChild(oldSpan);
+                    diffWrap.appendChild(arrow);
+                    diffWrap.appendChild(newSpan);
+
+                    // Per-field accept/reject — store decision on the entry
+                    if (entry._fieldDecision === undefined) entry._fieldDecision = "accepted";
+                    var fieldBtns = document.createElement("span");
+                    fieldBtns.style.marginLeft = "8px";
+                    var btnAccept = document.createElement("button");
+                    btnAccept.textContent = "keep new";
+                    btnAccept.className = "mf-btn-sm";
+                    var btnReject = document.createElement("button");
+                    btnReject.textContent = "keep old";
+                    btnReject.className = "mf-btn-sm";
+                    btnAccept.addEventListener("click", function() { entry._fieldDecision = "accepted"; row.style.background = "#fef3c7"; });
+                    btnReject.addEventListener("click", function() { entry._fieldDecision = "rejected"; row.style.background = "#e5e7eb"; });
+                    fieldBtns.appendChild(btnAccept);
+                    fieldBtns.appendChild(btnReject);
+                    row.appendChild(diffWrap);
+                    row.appendChild(fieldBtns);
+                } else {
+                    var valueEl = document.createElement("span");
+                    valueEl.className = "mf-review-field-value";
+                    valueEl.textContent = formatVal(entry.proposed);
+                    row.appendChild(valueEl);
+                }
+                return row;
+            };
+
+            // Fills first (clean wins), then diffs (warn), then same (greyed)
+            for (var i = 0; i < classified.fill.length; i++) {
+                fieldsContainer.appendChild(renderRow(classified.fill[i], "fill"));
             }
+            for (var i = 0; i < classified.diff.length; i++) {
+                fieldsContainer.appendChild(renderRow(classified.diff[i], "diff"));
+            }
+            for (var i = 0; i < classified.same.length; i++) {
+                fieldsContainer.appendChild(renderRow(classified.same[i], "same"));
+            }
+
+            // Stash classified bucket on the review item so apply-time can use it
+            reviewItem._classified = classified;
         }
         // Two-column body: fields left, PDF thumbnail right
         var bodyRow = document.createElement("div");
@@ -1104,6 +1511,23 @@ var MetadataFillerDialog = {
 
         actions.appendChild(acceptBtn);
         actions.appendChild(rejectBtn);
+
+        // Per-item raw response disclosure. The raw text is what the model
+        // (or enrichment service) actually returned, before parsing — the
+        // single most useful thing when an item came back wrong.
+        if (reviewItem.rawResponse) {
+            var rawBtn = this._htmlBtn("raw", "mf-btn-sm", function() {
+                var existing = card.querySelector(".mf-review-raw");
+                if (existing) { existing.remove(); return; }
+                var pre = document.createElement("pre");
+                pre.className = "mf-review-raw";
+                pre.style.cssText = "margin-top:6px; max-height:240px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap;";
+                pre.textContent = reviewItem.rawResponse;
+                card.appendChild(pre);
+            });
+            rawBtn.title = "Show raw text returned by the model / enrichment source";
+            actions.appendChild(rawBtn);
+        }
         card.appendChild(actions);
 
         return card;
@@ -1169,7 +1593,7 @@ var MetadataFillerDialog = {
                     await this._applyOrphanChanges(result);
                     orphansCreated++;
                 } else {
-                    await this._applyChanges(result.scanResult, result.llmData);
+                    await this._applyChanges(result.scanResult, result.llmData, result);
                 }
                 applied++;
             } catch (e) {
@@ -1203,25 +1627,70 @@ var MetadataFillerDialog = {
     },
 
     /**
-     * Apply LLM-extracted metadata to a Zotero item (normal mode).
+     * Apply LLM/enrichment-derived metadata to a Zotero item (normal mode).
+     *
+     * Honours:
+     *   - skip-already-good: skip any field that already has a non-empty value
+     *     unless the user explicitly accepted the diff in the review card.
+     *   - per-field accept/reject for diffs.
+     *   - source: enrichment-sourced data (OpenAlex / CrossRef) ignores
+     *     skip-existing because verified data is allowed to overwrite.
      */
-    async _applyChanges(scanResult, llmData) {
+    async _applyChanges(scanResult, llmData, reviewItem) {
         const item = scanResult.item;
+        var skipExisting = Zotero.Prefs.get("extensions.metadata-filler.skipExisting") !== false;
+        var sourceTrusted = reviewItem && reviewItem.source && reviewItem.source !== "llm";
 
-        for (const fieldDef of scanResult.missingFields) {
-            const value = llmData[fieldDef.llmKey];
-            if (value === undefined || value === null) continue;
+        // Build a quick lookup of per-field decisions from classifyChanges output
+        var fieldDecisions = {};
+        if (reviewItem && reviewItem._classified) {
+            var c = reviewItem._classified;
+            for (var di = 0; di < c.diff.length; di++) {
+                var entry = c.diff[di];
+                fieldDecisions[entry.fieldDef.llmKey] = entry._fieldDecision || "accepted";
+            }
+        }
+
+        // Iterate over the union of originally-missing + any enrichment extras
+        var fieldDefs = (scanResult.missingFields || []).slice();
+        var seen = {};
+        for (var i = 0; i < fieldDefs.length; i++) seen[fieldDefs[i].llmKey] = true;
+        if (scanResult.typeKey && FieldMappings.types[scanResult.typeKey]) {
+            var allFields = FieldMappings.getFieldsForType(scanResult.typeKey);
+            for (var j = 0; j < allFields.length; j++) {
+                if (!seen[allFields[j].llmKey]) fieldDefs.push(allFields[j]);
+            }
+        }
+
+        for (var f = 0; f < fieldDefs.length; f++) {
+            var fieldDef = fieldDefs[f];
+            var value = llmData[fieldDef.llmKey];
+            if (value === undefined || value === null || value === "") continue;
+
+            var existingEmpty = this._isFieldEmpty(item, fieldDef.zotero, !!fieldDef.isCreator);
+
+            if (!existingEmpty) {
+                var decision = fieldDecisions[fieldDef.llmKey];
+                if (decision === "rejected") continue;
+                if (skipExisting && !sourceTrusted && decision !== "accepted") continue;
+            }
 
             if (fieldDef.isCreator && Array.isArray(value)) {
-                const creatorTypeID = Zotero.CreatorTypes.getID(fieldDef.creatorType);
-                const existingCreators = item.getCreators();
-                const newCreators = [...existingCreators];
-
-                for (const c of value) {
+                var creatorTypeID = Zotero.CreatorTypes.getID(fieldDef.creatorType);
+                var newCreators;
+                if (existingEmpty) {
+                    newCreators = [];
+                } else if (sourceTrusted) {
+                    // Verified source: replace with canonical authors
+                    newCreators = [];
+                } else {
+                    newCreators = item.getCreators().slice();
+                }
+                for (var ci = 0; ci < value.length; ci++) {
                     newCreators.push({
-                        firstName: c.firstName || "",
-                        lastName: c.lastName || "",
-                        creatorTypeID,
+                        firstName: value[ci].firstName || "",
+                        lastName: value[ci].lastName || "",
+                        creatorTypeID: creatorTypeID,
                     });
                 }
                 item.setCreators(newCreators);

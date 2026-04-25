@@ -1,0 +1,9 @@
+{
+  "name": "zotero-metadata-filler",
+  "private": true,
+  "description": "Zotero 7 plugin: AI-powered metadata extraction from PDFs.",
+  "scripts": {
+    "test": "node --test tests/llmClient.test.js tests/enrich.test.js tests/costEstimator.test.js",
+    "build": "bash scripts/build.sh"
+  }
+}

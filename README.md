@@ -19,6 +19,9 @@ There is also a **right-click "Quick Fill"** mode for orphan PDFs that creates a
 | **Anthropic** | `claude-sonnet-4-20250514` | [console.anthropic.com](https://console.anthropic.com/) |
 | **Google Gemini** | `gemini-2.0-flash` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | **OpenAI-compatible** | _(user-supplied)_ | — |
+| **Apple Intelligence (on-device)** | _(single model)_ | — _(macOS only, see below)_ |
+
+If you don't want to pay for a model, or send your data externally, then download Ollama and install an open source model, and point your OpenAI-compatible endpoint to Ollama in the way described by the software.
 
 Each provider has a **custom model** field — type any model identifier and it will be used.
 
@@ -43,6 +46,107 @@ Open the dialog (Tools → Find &amp; Fill Missing Metadata…) and expand **"Ad
   - Tweak `response_format`, `top_p`, etc.
 
 So if OpenAI/Anthropic/Google ship a breaking parameter change tomorrow, you can fix your install in 30 seconds without an update.
+
+## Apple Intelligence (on-device, macOS only)
+
+The plugin can route requests to Apple's on-device foundation model instead of an HTTP API. **It runs entirely on the user's Mac — no API keys, no network, no per-token cost.**
+
+### Requirements
+
+- Apple Silicon Mac (M-series)
+- macOS 26 (Tahoe) or later
+- Apple Intelligence enabled in System Settings → Apple Intelligence (allow time for the model to download on first enable)
+
+### Why opt-in for non-Mac users
+
+The "Apple Intelligence" provider entry is **removed from the dropdown** on Linux and Windows so non-Mac users never see it. The Swift helper binary is shipped only inside builds that successfully built it on a macOS CI runner — Linux/Windows users get a `.xpi` that doesn't even contain `bin/fm-helper`. Cross-platform users see no extra prompts, no missing-feature errors, no behaviour change.
+
+### How it works
+
+A small Swift CLI (`fm-helper`) wraps Apple's `FoundationModels` framework. The plugin invokes it as a subprocess: writes the prompt to a temp JSON file, runs the helper, reads the JSON result back, deletes both. The helper is generic text-in / text-out, so the plugin's existing JSON parser (with its alias table, markdown-fence stripping, and never-trust-LLM-URLs rule) works unchanged.
+
+```
+JS plugin  ── writes ──►  /tmp/mf-apple-in-*.json
+   │                              │
+   │                       fm-helper (Swift)
+   │                              │
+   │                       LanguageModelSession
+   │                              │
+JS plugin  ── reads ───  /tmp/mf-apple-out-*.json
+```
+
+The on-device model is **text-only** as of macOS 26, so the Apple provider drops image parts before sending. Everything else (page-range, embedded PDF metadata, OpenAlex enrichment, DOI shortcut, retry, diff view) works the same.
+
+### Getting the helper installed
+
+Three paths, in order of convenience.
+
+#### Path 1 — "Build helper now" button (recommended)
+
+Open the dialog (Tools → Find &amp; Fill Missing Metadata…), select **Apple Intelligence (on-device)** as the provider, and click **Build helper now**.
+
+The plugin will:
+1. Check for Xcode CLI tools (`xcode-select -p`). If missing, you get a precise instruction: run `xcode-select --install` and re-click.
+2. Compile `fm-helper/` from the source bundled inside the .xpi (`swift build -c release --arch arm64`). Takes 30–60 seconds the first time.
+3. Copy the resulting binary to `<Zotero data dir>/fm-helper`, ad-hoc sign it, `chmod +x`, and strip the quarantine attribute.
+4. Auto-fill the helper-path field.
+
+Compile output and any errors are shown in a panel below the buttons — copy/paste straight into a bug report if it fails.
+
+#### Path 2 — released `.xpi` with a pre-built helper
+
+Tagged releases (`vX.Y.Z`) attempt to include a CI-built, ad-hoc-signed `bin/fm-helper`. On startup the plugin copies it to `<Zotero data dir>/fm-helper`, `chmod +x`'s it, and strips `com.apple.quarantine`.
+
+**Important caveat (Apr 2026):** GitHub's hosted runners don't yet have the macOS 26 SDK that `FoundationModels` requires. The CI workflow tries `macos-26` and `macos-latest` runners in parallel — once GitHub publishes either with the macOS 26 SDK, the workflow auto-picks it with no code change. Until then, released `.xpi`s ship without a pre-built helper, and Path 1 is the way.
+
+The CI does **not** require an Apple Developer account — it does ad-hoc signing only.
+
+#### Path 3 — manual build from a Terminal
+
+```bash
+cd /path/to/zotero-metadata-filler/fm-helper
+swift build -c release --arch arm64
+codesign --sign - --force --timestamp=none .build/arm64-apple-macosx/release/fm-helper
+cp .build/arm64-apple-macosx/release/fm-helper "$ZOTERO_DATA_DIR/fm-helper"
+chmod +x "$ZOTERO_DATA_DIR/fm-helper"
+```
+
+Or `MF_BUILD_HELPER=1 ./scripts/build.sh` to build helper + .xpi in one shot. The script gates on `xcode-select -p` so it won't trigger an Xcode CLI install prompt on machines that don't have it.
+
+The plugin looks for a helper at: `extensions.metadata-filler.apple.helperPath` pref → `<Zotero data dir>/fm-helper` → `<addon root>/bin/fm-helper`.
+
+### Verifying it works
+
+In the dialog, pick "Apple Intelligence (on-device)" as the provider. Click **Test** next to the helper-path field — it reports the path it found, or what's missing.
+
+### What if it fails?
+
+When the Apple provider hits an error, the dialog now shows a multi-line message with concrete next steps. Common failure modes:
+
+- **"helper binary not found"** — the message lists every path checked (✓/✗) and tells you exactly what to run. Easiest fix: click **Build helper now**.
+- **"On-device model unavailable"** — Apple Intelligence isn't enabled, or the model is still downloading. The error includes the steps: System Settings → Apple Intelligence &amp; Siri → enable, then wait for the download.
+- **"guardrail blocked this content"** — Apple's safety filter caught something. The message tells you to try a different item or fall back to OpenAI/Anthropic/Google for that one.
+- **"context-window"** — input + expected output exceeded the ~4K-token budget. The message tells you to reduce `pageRange.short` to 1, or use the Advanced panel to trim the prompt, or switch providers.
+- **"binary couldn't be executed" (exit 126/127)** — typically a quarantine attribute. The error message includes the exact `xattr -d` and `chmod +x` commands to copy/paste. Also suggests **Build helper now** as a one-click rebuild.
+- **swift build fails** — the build status panel shows the exit code. Most common cause is missing macOS 26 SDK (update macOS / Xcode). The message includes the exact command to re-run from Terminal for full output.
+
+For *any* failure, the **Last raw model response (debug)** disclosure on the dialog's first page shows the exact text the helper emitted (or the JSON error payload), useful for filing an issue.
+
+### Limits to design around
+
+- **~4K-token total context** (input + output combined). Roughly 12–15 KB of English text. Fine for two-page metadata extraction; not fine for long-document summarisation.
+- **Single model.** No model selection — the "Model" field is ignored for the Apple provider.
+- **Text-only.** Image parts are stripped. The plugin still extracts page images for *other* providers in the same scan.
+- **English works best.** Other languages work, accuracy varies.
+
+## Seeing what the model actually returned (debug)
+
+Two ways to inspect raw model output without enabling Zotero's debug log:
+
+- **"Last raw model response (debug)"** disclosure on the dialog's first page. Shows the exact text from the most recent call (any provider, any flow — manual, Quick Fill, Apple). Has Refresh / Copy / Clear buttons.
+- **"raw" button on each review card** in the manual flow. Toggles a panel under the card showing exactly what came back for *that* item. For DOI-shortcut hits, this shows the OpenAlex/CrossRef JSON instead.
+
+This is the first thing to check when an item came back wrong, before re-running.
 
 ## Recent Quick Fill activity panel
 
@@ -130,6 +234,15 @@ Stored as Zotero prefs under `extensions.metadata-filler.*`:
 | `concurrency` | `3` | Parallel requests (1–10) |
 | `maxTokens` | `2048` | Max response tokens |
 | `sendImages` | `true` | Whether to ship rendered page images |
+| `doiShortcut` | `true` | DOI on page 1 → OpenAlex shortcut, skip LLM |
+| `forceLLM` | `false` | Override the DOI shortcut, always use the model |
+| `enrich` | `true` | Confirm/extend via OpenAlex/CrossRef after LLM |
+| `skipExisting` | `true` | Don't overwrite a non-empty field unless explicitly accepted |
+| `pageRange.short` | `2` | Pages to read for short docs |
+| `pageRange.long` | `4` | Pages to read for docs ≥ threshold |
+| `pageRange.longThreshold` | `50` | Page count above which "long" rules apply |
+| `openalex.mailto` | _(empty)_ | OpenAlex polite-pool email (higher rate limit) |
+| `openalex.apiKey` | _(empty)_ | Optional OpenAlex API key |
 | `quickFillLog` | _(internal)_ | Ring buffer for the Quick Fill activity log |
 
 ## Privacy &amp; safety
@@ -140,45 +253,48 @@ Stored as Zotero prefs under `extensions.metadata-filler.*`:
 - **Only first 2 pages** of each PDF are sent.
 - **No telemetry.**
 
-## Critical appraisal (honest)
+## What v1.2 added
 
+- **DOI shortcut.** First-page DOI is regex-extracted; if found, the plugin queries OpenAlex (with CrossRef fallback) and skips the LLM entirely. Configurable + toggleable per-run via "Force LLM (skip DOI shortcut)". Both the manual flow and the right-click Quick Fill use this path.
+- **OpenAlex / CrossRef confirmation.** When the LLM does run and returns a DOI, the result is reconciled against OpenAlex; canonical fields (title, authors, journal, volume/issue/pages, ISSN, date) come from the verified source, abstracts/URLs only fill if the LLM left them blank. Each review card shows a green ✓ source badge when this happened.
+- **Title-search fallback.** When the LLM returns sparse results without a DOI, the plugin tries an OpenAlex title search and offers the top match if it plausibly aligns with the extracted title.
+- **OpenAlex polite-pool / API key prefs** for higher rate limits.
+- **Configurable page range, adaptive for long docs.** Defaults: 2 pages for short docs, 4 pages for docs ≥50 pages (theses, books). All three numbers (short / threshold / long) are editable in the dialog.
+- **Embedded PDF metadata** (`/Title`, `/Author`, `/Subject`, XMP) is extracted via pdf.js and passed to the LLM as a soft prior — explicitly framed as "verify against the page content; ignore if obviously wrong" so the model doesn't blindly trust the PDF Author field that often holds a vendor name.
+- **Diff view** in the review screen: existing value (struck-through) → proposed value (highlighted), with per-field "keep new" / "keep old" buttons.
+- **Skip-already-good toggle** (default on). Non-empty fields aren't overwritten unless either (a) the user clicks "keep new" on the diff, or (b) the source is verified (OpenAlex/CrossRef).
+- **Run preservation.** "Back to Results" no longer clears the run; reopen the review without re-scanning.
+- **Cost estimator** (token-only). Click "Estimate cost" on the Select Items step to see approximate input/output/image tokens for the selection. USD figures are intentionally not shown — provider prices change too often for a hardcoded table to be safer than no number.
+- **Retry with jittered exponential backoff** on 429 and 5xx for every provider call (3 attempts; honours `Retry-After`).
+- **Never-trust-LLM-URLs.** The parser drops any `url`, `link`, `html_url`, or `homepage` key returned by the LLM. URLs only land on items via OpenAlex/CrossRef enrichment.
+- **Tests.** 23 unit tests under `tests/` covering the OpenAI body builder, body-override merge, response parsing (incl. URL stripping), DOI extraction, OpenAlex normalisation, abstract reconstruction, retry-after parsing, prompt templating, and token estimation. Run with `npm test`. Wired into CI.
 
+## Critical appraisal (honest, what's still weak)
 
-- **No retry / backoff.** A single 429 or transient 5xx fails the item permanently for that run. There's no jitter, no exponential backoff, no per-item resume.
-- **Field-mapping fragility.** `_parseResponse` relies on a hard-coded alias table (`journal` → `publicationTitle`, etc.). Any model that returns `journalShort` or `containerTitle` is dropped silently.
-- **No deduplication / DOI lookup.** When the AI extracts a DOI, the plugin doesn't ask CrossRef/OpenAlex/PubMed to confirm or expand other fields — those services are free, deterministic, and far more accurate than an LLM for canonical metadata.
-- **No cost transparency.** Users don't see token counts or estimated $ before/after a run.
-- **No persistent run history** beyond the Quick Fill log buffer added in v1.1. Failed items can't easily be retried.
-- **Trusts the LLM blindly.** No confidence scores, no flagging when the extracted title doesn't match the PDF's first heading, no diff view against existing fields when the user is _replacing_ rather than filling.
-- **Single-page assumption.** Fixed at "first two pages." Books and theses often have the metadata page later.
-- **No tests.** The whole codebase is untested; adding even a thin smoke test for `_parseResponse` and `_buildOpenAIBody` would prevent a class of regressions.
+- **Field-mapping aliases are still hand-rolled.** `_parseResponse` knows about `journal`/`containerTitle`/`journalName` but a model that returns `journalShort` or `series` is dropped silently. A schema-driven alias table or per-type Zod-style validator would scale better.
+- **No per-item retry in the UI.** Backoff handles transient HTTP errors, but if all 3 attempts fail, the only remedy is re-running the whole scan.
+- **No confidence scoring.** The model is never asked to mark uncertain fields, so the diff view treats "obviously hallucinated" the same as "verbatim from page 1".
+- **No abstract / page-image hash for change-detection.** Re-running the same item makes the same API call.
+- **PDF info-dict priority is soft.** Embedded metadata is shown to the model as a hint, not used as a deterministic fast-path for items where it's clearly correct (e.g. Crossref-stamped publisher PDFs).
+- **No CSV / JSON export of a run** for audit / replay.
+- **No localisation.** Strings are inline English; `locale/en-US/addon.ftl` is unused.
 
 ## Roadmap
 
-Modest, convenience-oriented improvements (in rough priority order):
-
-### v1.2 — convenience &amp; reliability
-- [ ] **CrossRef/OpenAlex confirmation step.** When the AI extracts a DOI, hit CrossRef before showing the review screen — replace AI-guessed authors/title/journal with canonical CrossRef data, mark them as "verified".
-- [ ] **Retry with backoff** on 429 / 5xx (3 attempts, jittered exponential).
-- [ ] **Per-item retry** in the review screen for failed items, without restarting the whole scan.
-- [ ] **Keep the run** in memory across "Back to Results" so users can re-process a subset.
-- [ ] **Cost estimator.** Before processing, show approx tokens × price for selected items.
-- [ ] **Skip-already-good toggle.** When a field already has a value, ignore the AI's proposal unless the user explicitly opts to overwrite.
-
-### v1.3 — better extraction
-- [ ] **Configurable page range** (default still 1–2, but allow last-page or middle-page sampling for theses/books where colophon data lives at the back).
-- [ ] **Diff view** in the review screen: existing value vs proposed value, side by side.
-- [ ] **Confidence flags.** Ask the model to return a `_confidence` per field; surface low-confidence values in yellow.
-- [ ] **Embedded PDF metadata first.** Read `/Title`, `/Author`, XMP, etc. from the PDF info dictionary before paying for an LLM call — many publisher PDFs already have correct metadata embedded.
-- [ ] **Title-search fallback.** If text extraction yields a clean title and the AI returns nothing else, query OpenAlex/CrossRef by title and offer those results.
+### v1.3 — extraction quality
+- [ ] **Schema-driven field aliases.** Replace the hand-rolled alias table with a per-llmKey list of accepted synonyms loaded from one place.
+- [ ] **Per-item retry button** on failed review cards.
+- [ ] **Confidence flags.** Ask the model for `_confidence` per field; render low-confidence in yellow.
+- [ ] **Trusted embedded metadata fast-path.** When the PDF info dict has `/Title` and `/Author` that match the visible page text, skip the LLM and use the dict directly (or just enrich from a derived DOI).
+- [ ] **PubMed lookup** for biomedical items where OpenAlex/CrossRef miss.
+- [ ] **Hash + cache** results so re-running the same PDF is free.
 
 ### v1.4 — workflow polish
-- [ ] **Preferences pane** (Edit → Settings → Metadata Filler) instead of cramming everything into the dialog.
-- [ ] **Watcher mode.** Optionally process newly-added attachments automatically (off by default), with a "Drafts" collection users can review.
-- [ ] **Localised UI** (currently English only — `addon.ftl` exists but unused).
-- [ ] **Keyboard navigation** in the review screen (j/k to move, a/r to accept/reject).
-- [ ] **CSV export** of the last run (item key, original fields, proposed fields, decision).
-- [ ] **Light unit tests** for `_parseResponse`, `_buildOpenAIBody`, body-override merge, and field mapping aliases.
+- [ ] **Preferences pane** (Edit → Settings → Metadata Filler) instead of stuffing everything into the dialog.
+- [ ] **Watcher mode.** Optionally process newly-added attachments automatically into a "Drafts" collection.
+- [ ] **Localised UI.**
+- [ ] **Keyboard navigation** (j/k to move, a/r to accept/reject) in the review.
+- [ ] **CSV export** of the last run (item key, original fields, proposed fields, decision, source).
 
 ### Things deliberately out of scope
 - Citation generation / formatting. Zotero already does this well.

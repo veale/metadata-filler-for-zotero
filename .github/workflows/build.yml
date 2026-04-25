@@ -9,13 +9,126 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Build the optional Apple Intelligence helper on macOS.
+  #
+  # This job is intentionally NOT run on every push — macOS runners are
+  # expensive, the macOS-26 SDK isn't always available on the latest hosted
+  # image, and non-Apple users don't need the binary. It runs:
+  #
+  #   - On tag pushes (vX.Y.Z) so releases include the helper.
+  #   - On manual `workflow_dispatch` runs.
+  #
+  # `continue-on-error: true` means a broken SDK / signing failure won't
+  # gate the main .xpi build; the .xpi is still produced (without the
+  # helper) and Apple users can build the helper locally from fm-helper/.
+  build-helper:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Matrix strategy with multiple runner labels: when GitHub publishes a
+    # `macos-26` runner image (which has the macOS 26 SDK that
+    # FoundationModels requires), this job will start succeeding on that
+    # entry automatically — no workflow change needed. Until then, the
+    # `macos-latest` entry runs immediately; if its current image happens
+    # to gain the macOS 26 SDK first, that path wins instead.
+    #
+    # `fail-fast: false` + `continue-on-error: true` mean a missing-SDK
+    # build failure on either entry never blocks the .xpi build job.
+    # `timeout-minutes: 30` prevents an unavailable runner label from
+    # queuing for hours.
+    #
+    # No Apple Developer ID required — we ad-hoc sign with `codesign --sign -`,
+    # and the plugin's bootstrap strips com.apple.quarantine on startup so
+    # the downloaded binary runs on most Macs.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    timeout-minutes: 30
+    outputs:
+      built: ${{ steps.build.outputs.built }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version || true
+          swift --version
+
+      - name: Build fm-helper
+        id: build
+        working-directory: fm-helper
+        run: |
+          set -eux
+          swift build -c release --arch arm64
+          BIN=".build/arm64-apple-macosx/release/fm-helper"
+          file "$BIN"
+          codesign --sign - --force --timestamp=none "$BIN"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload helper artifact
+        if: steps.build.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          # Per-runner artifact name so both matrix entries can upload
+          # without colliding. The bundling step below tries each in turn.
+          name: fm-helper-${{ matrix.runner }}
+          path: fm-helper/.build/arm64-apple-macosx/release/fm-helper
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     runs-on: ubuntu-latest
+    needs: [build-helper]
+    if: always()
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run tests
+        run: npm test
+
+      # Try to grab a CI-built helper. We prefer the macos-26 runner artifact
+      # (built against the real macOS 26 SDK) and fall back to the
+      # macos-latest one. If neither exists (helper job was skipped or both
+      # failed), the .xpi ships without bin/ and Apple users can click
+      # "Build helper now" inside the dialog instead.
+      - name: Download helper (macos-26 if available)
+        id: dl-26
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: fm-helper-macos-26
+          path: bin
+
+      - name: Download helper (macos-latest fallback)
+        if: steps.dl-26.outcome != 'success'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: fm-helper-macos-latest
+          path: bin
+
+      - name: Stage helper for bundling
+        run: |
+          set -eux
+          if [ -f bin/fm-helper ]; then
+            chmod +x bin/fm-helper
+            echo "✓ fm-helper present, will be bundled into the .xpi"
+          else
+            echo "ℹ fm-helper not built on this run — .xpi will ship without it"
+            echo "  Apple users can click 'Build helper now' in the dialog,"
+            echo "  or build manually via 'cd fm-helper && swift build -c release --arch arm64'."
+          fi
 
       - name: Read version from manifest
         id: meta
@@ -30,14 +143,23 @@ jobs:
         run: |
           set -eux
           rm -f *.xpi
-          # The .xpi is just a zip of the addon root (manifest.json must be at top level).
+          # The .xpi is just a zip of the addon root (manifest.json must be at
+          # top level). bin/ is included only if the helper was successfully
+          # built by the build-helper job and downloaded into bin/fm-helper.
+          BIN_ARG=""
+          if [ -f bin/fm-helper ]; then BIN_ARG="bin/"; fi
+          HELPER_SRC=""
+          if [ -d fm-helper ]; then HELPER_SRC="fm-helper/"; fi
           zip -r "${{ steps.meta.outputs.xpi_name }}" \
             manifest.json \
             bootstrap.js \
             lib/ \
             content/ \
             locale/ \
-            -x "*.DS_Store" "*/.DS_Store"
+            $BIN_ARG \
+            $HELPER_SRC \
+            -x "*.DS_Store" "*/.DS_Store" \
+               "fm-helper/.build/*" "fm-helper/.swiftpm/*" "fm-helper/Package.resolved"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

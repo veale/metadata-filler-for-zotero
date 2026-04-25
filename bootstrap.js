@@ -34,6 +34,18 @@ function startup({ id, version, rootURI }) {
         Services.scriptloader.loadSubScript(rootURI + "lib/scanner.js");
         Services.scriptloader.loadSubScript(rootURI + "lib/pdfProcessor.js");
         Services.scriptloader.loadSubScript(rootURI + "lib/llmClient.js");
+        Services.scriptloader.loadSubScript(rootURI + "lib/enrich.js");
+        Services.scriptloader.loadSubScript(rootURI + "lib/costEstimator.js");
+
+        // Hand the addon's on-disk root to LLMClient so it can find a
+        // bundled Apple helper at <root>/bin/fm-helper. rootURI for an
+        // unpacked plugin is "file:///…/" — strip the scheme to a path.
+        try {
+            if (typeof LLMClient !== "undefined" && rootURI && rootURI.indexOf("file://") === 0) {
+                var fsPath = decodeURI(rootURI.replace(/^file:\/\//, "").replace(/\/$/, ""));
+                LLMClient._addonRootPath = fsPath;
+            }
+        } catch(e) {}
         _libsLoaded = true;
         log("Libs loaded into bootstrap scope");
     } catch(e) {
@@ -48,7 +60,76 @@ function startup({ id, version, rootURI }) {
         }
     } catch(e) {}
 
+    // Auto-install bundled Apple helper on macOS. The .xpi may ship a
+    // signed `bin/fm-helper`; we copy it to the Zotero data dir, chmod +x,
+    // and strip the quarantine attribute. This is best-effort: any failure
+    // just means the user has to set extensions.metadata-filler.apple.helperPath
+    // manually, or build the helper themselves.
+    try {
+        if (Zotero.isMac && rootURI && rootURI.indexOf("file://") === 0) {
+            installAppleHelperAsync(rootURI);
+        }
+    } catch(e) {
+        log("Apple helper auto-install skipped: " + e);
+    }
+
     addToAllWindows();
+}
+
+async function installAppleHelperAsync(rootURI) {
+    var addonRoot = decodeURI(rootURI.replace(/^file:\/\//, "").replace(/\/$/, ""));
+    var bundled = PathUtils.join(addonRoot, "bin", "fm-helper");
+    if (!(await IOUtils.exists(bundled))) {
+        log("Apple helper: not bundled in this .xpi; skipping auto-install");
+        return;
+    }
+
+    var dataDir = Zotero.DataDirectory.dir;
+    var dest = PathUtils.join(dataDir, "fm-helper");
+
+    // Skip the copy if it's already in place AND has the same size — saves
+    // chmod + xattr cost on every startup.
+    var needsCopy = true;
+    try {
+        if (await IOUtils.exists(dest)) {
+            var srcStat = await IOUtils.stat(bundled);
+            var dstStat = await IOUtils.stat(dest);
+            if (srcStat.size === dstStat.size) needsCopy = false;
+        }
+    } catch(e) {}
+
+    if (needsCopy) {
+        try {
+            var data = await IOUtils.read(bundled);
+            await IOUtils.write(dest, data);
+            log("Apple helper: copied to " + dest);
+        } catch(e) {
+            log("Apple helper: copy failed: " + e);
+            return;
+        }
+    }
+
+    // chmod +x (IOUtils has no chmod; shell out to /bin/chmod). Best effort.
+    try {
+        var chmodFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+        chmodFile.initWithPath("/bin/chmod");
+        var chmodProc = Cc["@mozilla.org/process/util;1"].createInstance(Ci.nsIProcess);
+        chmodProc.init(chmodFile);
+        chmodProc.runAsync(["+x", dest], 2, { observe: function(){} });
+    } catch(e) {
+        log("Apple helper: chmod failed: " + e);
+    }
+
+    // Strip quarantine xattr — without this, an ad-hoc-signed binary
+    // downloaded from a release will be killed by Gatekeeper. Best effort;
+    // silently ignored if `xattr` isn't on PATH or the attribute isn't set.
+    try {
+        var xattrFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+        xattrFile.initWithPath("/usr/bin/xattr");
+        var xattrProc = Cc["@mozilla.org/process/util;1"].createInstance(Ci.nsIProcess);
+        xattrProc.init(xattrFile);
+        xattrProc.runAsync(["-d", "com.apple.quarantine", dest], 3, { observe: function(){} });
+    } catch(e) {}
 }
 
 function shutdown() {
@@ -230,6 +311,9 @@ async function quickFillSelected(win) {
     }
     var model = LLMClient.getEffectiveModel(provider);
     var maxTokens = Zotero.Prefs.get("extensions.metadata-filler.maxTokens") || 2048;
+    var doiShortcut = Zotero.Prefs.get("extensions.metadata-filler.doiShortcut") !== false;
+    var forceLLM = !!Zotero.Prefs.get("extensions.metadata-filler.forceLLM");
+    var enrichEnabled = Zotero.Prefs.get("extensions.metadata-filler.enrich") !== false;
 
     // Show progress popup
     var progressWin = new Zotero.ProgressWindow({ closeOnClick: false });
@@ -260,15 +344,52 @@ async function quickFillSelected(win) {
             var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages");
             var imageToSend = sendImages ? pdfData.imageBase64 : null;
 
-            // Query LLM
-            var result = await LLMClient.queryOrphan({
-                text: pdfData.text,
-                imageBase64: imageToSend,
-                provider: provider,
-                apiKey: apiKey,
-                model: model,
-                maxTokens: maxTokens,
-            });
+            // ── DOI shortcut for Quick Fill ──
+            // If the first page contains a DOI and the user hasn't disabled
+            // it, skip the LLM entirely and pull canonical metadata from
+            // OpenAlex (or CrossRef). This is the fastest, cheapest, and
+            // most accurate path when it works.
+            var detectedDOI = Enrich.extractDOIFromText((pdfData.text || "").substring(0, 4000));
+            var enrichedShortcut = null;
+            if (detectedDOI && doiShortcut && !forceLLM) {
+                _qfLogAppend("  DOI detected (" + detectedDOI + "), trying OpenAlex/CrossRef shortcut");
+                enrichedShortcut = await Enrich.fetchByDOI(detectedDOI);
+                if (enrichedShortcut) {
+                    _qfLogAppend("  ✓ shortcut succeeded via " + (enrichedShortcut._source || "openalex"));
+                } else {
+                    _qfLogAppend("  ✗ shortcut miss; falling back to LLM");
+                }
+            }
+
+            // Query LLM (skipped if DOI shortcut succeeded)
+            var result;
+            if (enrichedShortcut) {
+                // Heuristic: OpenAlex doesn't return item type, but works are
+                // overwhelmingly journal articles. Default to journalArticle.
+                result = { itemType: "journalArticle", metadata: enrichedShortcut };
+            } else {
+                result = await LLMClient.queryOrphan({
+                    text: pdfData.text,
+                    imageBase64: imageToSend,
+                    embedded: pdfData.embedded,
+                    provider: provider,
+                    apiKey: apiKey,
+                    model: model,
+                    maxTokens: maxTokens,
+                });
+
+                // Post-LLM enrichment for Quick Fill too
+                if (enrichEnabled && result.metadata) {
+                    var doiToCheck = result.metadata.doi || detectedDOI;
+                    var postEnriched = null;
+                    if (doiToCheck) postEnriched = await Enrich.fetchByDOI(doiToCheck);
+                    else if (result.metadata.title) postEnriched = await Enrich.searchByTitle(result.metadata.title);
+                    if (postEnriched) {
+                        _qfLogAppend("  ↻ enriched from " + (postEnriched._source || "openalex"));
+                        result.metadata = Enrich.mergeOver(result.metadata, postEnriched);
+                    }
+                }
+            }
 
             log("Quick fill: LLM identified type=" + result.itemType + ", fields=" + Object.keys(result.metadata).length);
 
