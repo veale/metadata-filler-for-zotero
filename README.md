@@ -271,7 +271,7 @@ Stored as Zotero prefs under `extensions.metadata-filler.*`:
 - **Never-trust-LLM-URLs.** The parser drops any `url`, `link`, `html_url`, or `homepage` key returned by the LLM. URLs only land on items via OpenAlex/CrossRef enrichment.
 - **Tests.** 23 unit tests under `tests/` covering the OpenAI body builder, body-override merge, response parsing (incl. URL stripping), DOI extraction, OpenAlex normalisation, abstract reconstruction, retry-after parsing, prompt templating, and token estimation. Run with `npm test`. Wired into CI.
 
-## Critical appraisal (honest, what's still weak)
+## to improve
 
 - **Field-mapping aliases are still hand-rolled.** `_parseResponse` knows about `journal`/`containerTitle`/`journalName` but a model that returns `journalShort` or `series` is dropped silently. A schema-driven alias table or per-type Zod-style validator would scale better.
 - **No per-item retry in the UI.** Backoff handles transient HTTP errors, but if all 3 attempts fail, the only remedy is re-running the whole scan.
@@ -280,28 +280,6 @@ Stored as Zotero prefs under `extensions.metadata-filler.*`:
 - **PDF info-dict priority is soft.** Embedded metadata is shown to the model as a hint, not used as a deterministic fast-path for items where it's clearly correct (e.g. Crossref-stamped publisher PDFs).
 - **No CSV / JSON export of a run** for audit / replay.
 - **No localisation.** Strings are inline English; `locale/en-US/addon.ftl` is unused.
-
-## Roadmap
-
-### v1.3 — extraction quality
-- [ ] **Schema-driven field aliases.** Replace the hand-rolled alias table with a per-llmKey list of accepted synonyms loaded from one place.
-- [ ] **Per-item retry button** on failed review cards.
-- [ ] **Confidence flags.** Ask the model for `_confidence` per field; render low-confidence in yellow.
-- [ ] **Trusted embedded metadata fast-path.** When the PDF info dict has `/Title` and `/Author` that match the visible page text, skip the LLM and use the dict directly (or just enrich from a derived DOI).
-- [ ] **PubMed lookup** for biomedical items where OpenAlex/CrossRef miss.
-- [ ] **Hash + cache** results so re-running the same PDF is free.
-
-### v1.4 — workflow polish
-- [ ] **Preferences pane** (Edit → Settings → Metadata Filler) instead of stuffing everything into the dialog.
-- [ ] **Watcher mode.** Optionally process newly-added attachments automatically into a "Drafts" collection.
-- [ ] **Localised UI.**
-- [ ] **Keyboard navigation** (j/k to move, a/r to accept/reject) in the review.
-- [ ] **CSV export** of the last run (item key, original fields, proposed fields, decision, source).
-
-### Things deliberately out of scope
-- Citation generation / formatting. Zotero already does this well.
-- Local model integration via Ollama _is welcome_ via the OpenAI-compatible provider — no special-casing needed.
-- Bulk operations on hundreds of thousands of items. The plugin will work, but you'd be better served by a one-shot script with batched API calls.
 
 ## Troubleshooting
 
