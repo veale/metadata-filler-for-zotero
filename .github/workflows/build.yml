@@ -8,6 +8,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Opt into Node 24 for all JS actions in this workflow. As of mid-2026 the
+# v4 actions (checkout / setup-node / upload-artifact / download-artifact)
+# still ship Node 20 binaries; this env var tells the runner to execute
+# them on Node 24 instead, silencing the deprecation warning and matching
+# what the runner will default to from June 2026.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   # Build the optional Apple Intelligence helper on macOS.
   #
@@ -97,13 +105,16 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # Try to grab a CI-built helper. We prefer the macos-26 runner artifact
-      # (built against the real macOS 26 SDK) and fall back to the
-      # macos-latest one. If neither exists (helper job was skipped or both
-      # failed), the .xpi ships without bin/ and Apple users can click
-      # "Build helper now" inside the dialog instead.
+      # Try to grab a CI-built helper, but only if the helper job actually ran.
+      # The job is gated to tags + workflow_dispatch (see build-helper above),
+      # so on a normal push to main `needs.build-helper.result` will be
+      # 'skipped' and we don't waste time trying to download artifacts that
+      # don't exist (and don't pollute the run with red "artifact not found"
+      # annotations). When it did run, prefer the macos-26 artifact (built
+      # against the real macOS 26 SDK) and fall back to macos-latest.
       - name: Download helper (macos-26 if available)
         id: dl-26
+        if: needs.build-helper.result == 'success' || needs.build-helper.result == 'failure'
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -111,7 +122,7 @@ jobs:
           path: bin
 
       - name: Download helper (macos-latest fallback)
-        if: steps.dl-26.outcome != 'success'
+        if: (needs.build-helper.result == 'success' || needs.build-helper.result == 'failure') && steps.dl-26.outcome != 'success'
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
