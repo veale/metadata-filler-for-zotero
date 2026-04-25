@@ -37,9 +37,11 @@ function startup({ id, version, rootURI }) {
         Services.scriptloader.loadSubScript(rootURI + "lib/enrich.js");
         Services.scriptloader.loadSubScript(rootURI + "lib/costEstimator.js");
 
-        // Hand the addon's on-disk root to LLMClient so it can find a
-        // bundled Apple helper at <root>/bin/fm-helper. rootURI for an
-        // unpacked plugin is "file:///…/" — strip the scheme to a path.
+        // Hand the addon's on-disk root to LLMClient if it's unpacked.
+        // Zotero 7 may load plugins from a packed .xpi (rootURI starts with
+        // "jar:file://"), in which case the source files aren't directly
+        // on disk — that path is handled separately by extracting the
+        // helper source into the data dir. See ensureFmHelperSrcAsync().
         try {
             if (typeof LLMClient !== "undefined" && rootURI && rootURI.indexOf("file://") === 0) {
                 var fsPath = decodeURI(rootURI.replace(/^file:\/\//, "").replace(/\/$/, ""));
@@ -61,13 +63,18 @@ function startup({ id, version, rootURI }) {
     } catch(e) {}
 
     // Auto-install bundled Apple helper on macOS. The .xpi may ship a
-    // signed `bin/fm-helper`; we copy it to the Zotero data dir, chmod +x,
-    // and strip the quarantine attribute. This is best-effort: any failure
-    // just means the user has to set extensions.metadata-filler.apple.helperPath
-    // manually, or build the helper themselves.
+    // signed `bin/fm-helper` (only when CI built it on a runner that had
+    // the macOS 26 SDK); we copy it to the Zotero data dir, chmod +x, and
+    // strip the quarantine attribute. Best-effort.
     try {
-        if (Zotero.isMac && rootURI && rootURI.indexOf("file://") === 0) {
+        if (Zotero.isMac) {
             installAppleHelperAsync(rootURI);
+            // Always extract the fm-helper/ source to a writable location so
+            // the in-dialog "Build helper now" button can compile from disk
+            // regardless of whether the .xpi was unpacked. Without this,
+            // packed-.xpi installs (which is the Zotero 7 default) had no
+            // path that swift could compile against.
+            ensureFmHelperSrcAsync(rootURI);
         }
     } catch(e) {
         log("Apple helper auto-install skipped: " + e);
@@ -76,33 +83,91 @@ function startup({ id, version, rootURI }) {
     addToAllWindows();
 }
 
+// Extract fm-helper/{Package.swift, Sources/fm-helper/main.swift} from the
+// addon (whether packed in a .xpi or unpacked on disk) into a writable
+// directory under the Zotero data dir. Idempotent: re-runs each startup
+// but skips writes if the file content is byte-identical.
+async function ensureFmHelperSrcAsync(rootURI) {
+    var dataDir = Zotero.DataDirectory.dir;
+    var destRoot = PathUtils.join(dataDir, "metadata-filler-fm-helper-src");
+    var sourcesDir = PathUtils.join(destRoot, "Sources", "fm-helper");
+    try { await IOUtils.makeDirectory(destRoot, { ignoreExisting: true, createAncestors: true }); } catch(e) {}
+    try { await IOUtils.makeDirectory(sourcesDir, { ignoreExisting: true, createAncestors: true }); } catch(e) {}
+
+    var files = [
+        { url: rootURI + "fm-helper/Package.swift",
+          dest: PathUtils.join(destRoot, "Package.swift") },
+        { url: rootURI + "fm-helper/Sources/fm-helper/main.swift",
+          dest: PathUtils.join(sourcesDir, "main.swift") },
+    ];
+
+    for (var i = 0; i < files.length; i++) {
+        try {
+            // fetch() works on both file:// and jar:file:// URIs in the
+            // Zotero/Firefox WebExtension context, so this handles both
+            // packed and unpacked installs uniformly.
+            var resp = await fetch(files[i].url);
+            if (!resp.ok) {
+                log("fm-helper source missing in this .xpi: " + files[i].url + " (status " + resp.status + ")");
+                return;
+            }
+            var text = await resp.text();
+            var existing = "";
+            try { existing = await IOUtils.readUTF8(files[i].dest); } catch(e) {}
+            if (existing !== text) {
+                await IOUtils.writeUTF8(files[i].dest, text);
+                log("fm-helper source extracted: " + files[i].dest);
+            }
+        } catch(e) {
+            log("fm-helper source extract failed for " + files[i].url + ": " + e);
+            return;
+        }
+    }
+
+    // Hand the resolved source dir to LLMClient so the Build-helper-now
+    // button knows where to point swift build at.
+    try {
+        if (typeof LLMClient !== "undefined") LLMClient._fmHelperSrcDir = destRoot;
+    } catch(e) {}
+}
+
 async function installAppleHelperAsync(rootURI) {
-    var addonRoot = decodeURI(rootURI.replace(/^file:\/\//, "").replace(/\/$/, ""));
-    var bundled = PathUtils.join(addonRoot, "bin", "fm-helper");
-    if (!(await IOUtils.exists(bundled))) {
-        log("Apple helper: not bundled in this .xpi; skipping auto-install");
+    // Works for both unpacked (file://...) and packed (jar:file://....xpi!/)
+    // installs by reading via fetch — the same mechanism the dialog uses
+    // to load chrome:// scripts. If bin/fm-helper isn't in the .xpi (the
+    // common case until GitHub's macos-26 runner has the macOS 26 SDK),
+    // this is a no-op and the user goes through "Build helper now" instead.
+    var dataDir = Zotero.DataDirectory.dir;
+    var dest = PathUtils.join(dataDir, "fm-helper");
+    var srcURL = rootURI + "bin/fm-helper";
+
+    var bytes;
+    try {
+        var resp = await fetch(srcURL);
+        if (!resp.ok) {
+            log("Apple helper: not bundled in this .xpi (status " + resp.status + "); skipping auto-install");
+            return;
+        }
+        var buf = await resp.arrayBuffer();
+        bytes = new Uint8Array(buf);
+    } catch(e) {
+        log("Apple helper: not bundled in this .xpi; skipping auto-install (" + e + ")");
         return;
     }
 
-    var dataDir = Zotero.DataDirectory.dir;
-    var dest = PathUtils.join(dataDir, "fm-helper");
-
-    // Skip the copy if it's already in place AND has the same size — saves
-    // chmod + xattr cost on every startup.
+    // Skip rewriting if the destination already matches by size.
     var needsCopy = true;
     try {
         if (await IOUtils.exists(dest)) {
-            var srcStat = await IOUtils.stat(bundled);
             var dstStat = await IOUtils.stat(dest);
-            if (srcStat.size === dstStat.size) needsCopy = false;
+            if (dstStat.size === bytes.byteLength) needsCopy = false;
         }
     } catch(e) {}
 
     if (needsCopy) {
         try {
-            var data = await IOUtils.read(bundled);
-            await IOUtils.write(dest, data);
-            log("Apple helper: copied to " + dest);
+            await IOUtils.write(dest, bytes);
+            log("Apple helper: copied " + bytes.byteLength + " bytes to " + dest);
         } catch(e) {
             log("Apple helper: copy failed: " + e);
             return;
