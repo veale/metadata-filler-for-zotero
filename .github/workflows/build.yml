@@ -199,4 +199,34 @@ jobs:
           files: |
             ${{ steps.meta.outputs.xpi_name }}
             update.json
+          # generate_release_notes: true appends GitHub's auto-changelog after
+          # the `body` text. So the instructions below appear at the top of
+          # every release, with "What's Changed" / "New Contributors" below.
           generate_release_notes: true
+          body: |
+            ## Install
+
+            **This is a Zotero plugin, not a browser extension.** Firefox / Floorp / LibreWolf etc. will try to install the `.xpi` as a *browser* extension if you just click the link — that will fail. Download it as a file first.
+
+            ### How to download
+
+            - **Firefox / Floorp / LibreWolf / Zen / Waterfox** → right-click the `metadata-filler-${{ steps.meta.outputs.version }}.xpi` link below → **Save Link As…** → save it somewhere you can find it.
+            - **Chrome / Edge / Brave / Arc / Vivaldi** → clicking the link should download it directly. If it shows a warning about an unusual file type, choose **Keep**.
+            - **Safari** → ⌥-click (Option-click) the link, or right-click → **Download Linked File**.
+
+            ### How to install in Zotero
+
+            1. Open Zotero 7 (or 8).
+            2. **Tools → Add-ons** (or **Tools → Plugins** on newer Zotero builds).
+            3. Click the gear icon (top right of the Add-ons window) → **Install Add-on From File…**
+            4. Pick the `.xpi` you just saved.
+            5. Restart Zotero if prompted.
+
+            ### After install
+
+            - **Tools → Find & Fill Missing Metadata…** — the manual review flow.
+            - Right-click an item → **Fill Missing Metadata for Selected…** or **Quick Fill Metadata with AI (no dialog)**.
+            - On macOS 26 / Apple Silicon, you can pick **Apple Intelligence (on-device)** as the provider — click **Build helper now** in the dialog the first time to compile the local helper (Xcode CLI tools required).
+
+            ---
+
