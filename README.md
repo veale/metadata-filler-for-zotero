@@ -1,6 +1,6 @@
-# Zotero Metadata Filler
+# Metadata Filler for Zotero
 
-A Zotero 7 plugin that uses multimodal AI to find and fill missing metadata in your library by analysing PDF attachments.
+A Zotero 7 plugin that uses multimodal AI, cloud or local, to find and fill missing metadata in your library by analysing text and or images from the first few pages of PDF attachments. Supports Apple Foundation Models with an extra step, and also uses OpenAlex to augment.
 
 ## What it does
 
