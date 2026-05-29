@@ -169,19 +169,33 @@ function onMainWindowUnload({ window }) {
     removeFromWindow(window);
 }
 
-function addToAllWindows() {
+// Use Zotero.getMainWindows() — the stable Zotero-native API available since
+// Zotero 7 — instead of Services.wm.getEnumerator("navigator:browser"). The
+// Firefox window-type string is not a contract Zotero promises to keep, and
+// relying on it is the kind of thing that quietly breaks across major versions
+// (Zotero 8/9). getMainWindows() returns only real main windows.
+function _getMainWindows() {
+    try {
+        if (typeof Zotero.getMainWindows === "function") return Zotero.getMainWindows();
+    } catch (e) {}
+    // Fallback for very old builds without getMainWindows().
+    var wins = [];
     var enumerator = Services.wm.getEnumerator("navigator:browser");
-    while (enumerator.hasMoreElements()) {
-        var win = enumerator.getNext();
-        if (win.ZoteroPane) addToWindow(win);
+    while (enumerator.hasMoreElements()) wins.push(enumerator.getNext());
+    return wins;
+}
+
+function addToAllWindows() {
+    var wins = _getMainWindows();
+    for (var i = 0; i < wins.length; i++) {
+        if (wins[i] && wins[i].ZoteroPane) addToWindow(wins[i]);
     }
 }
 
 function removeFromAllWindows() {
-    var enumerator = Services.wm.getEnumerator("navigator:browser");
-    while (enumerator.hasMoreElements()) {
-        var win = enumerator.getNext();
-        removeFromWindow(win);
+    var wins = _getMainWindows();
+    for (var i = 0; i < wins.length; i++) {
+        if (wins[i]) removeFromWindow(wins[i]);
     }
 }
 

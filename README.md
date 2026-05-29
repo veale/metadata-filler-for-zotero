@@ -294,7 +294,7 @@ Stored as Zotero prefs under `extensions.metadata-filler.*`:
 
 ## Requirements
 
-- **Zotero 7.0+** (not compatible with Zotero 6)
+- **Zotero 7, 8, or 9** (not compatible with Zotero 6)
 - API key from at least one supported provider
 - Internet access
 

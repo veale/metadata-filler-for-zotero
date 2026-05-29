@@ -23,9 +23,11 @@
 
                 Zotero.debug("Metadata Filler Dialog: onLoad fired");
 
-                // Services should be available in chrome windows
+                // Services is a global in chrome windows on every supported
+                // Zotero (7/8/9). Don't fall back to Services.jsm — that module
+                // was removed in modern Gecko and importing it now throws.
                 var svc = window.Services
-                    || Components.utils.import("resource://gre/modules/Services.jsm").Services;
+                    || (typeof Services !== "undefined" ? Services : null);
 
                 var args = window.arguments[0];
                 var scripts = [
