@@ -8,6 +8,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# GitHub is removing Node.js 20 from runners (forced to Node 24 from
+# 2026-06-02, removed 2026-09-16). The bundled JS actions below (checkout,
+# setup-node, upload/download-artifact) still ship a Node 20 runtime, which
+# emits a deprecation warning. Opting in to Node 24 now — per the warning's
+# own instructions — runs those actions on Node 24 and clears the warning.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # Build the optional Apple Intelligence helper on macOS.
   #
@@ -92,7 +100,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Run tests
         run: npm test
