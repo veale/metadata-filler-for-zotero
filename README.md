@@ -5,9 +5,11 @@ A Zotero plugin that uses multimodal AI, cloud or local, to find and fill missin
 ## What it does
 
 1. **Scans** your Zotero library for items with missing metadata (fully customisable: pick which item types and which specific fields to check)
-2. **Extracts** text and a rendered image from the first two pages of each item's PDF
-3. **Sends** both the text and image to a multimodal LLM, instructing it to return only the missing fields as structured JSON
+2. **Extracts** text from the first pages of each item's PDF (2 pages for short docs, up to 4 for long ones) — and, **only if you opt in**, a rendered image of those pages
+3. **Sends** the text (and the image, when enabled) to the LLM, instructing it to return only the missing fields as structured JSON
 4. **Presents** all proposed changes for your review — nothing is written to your library until you explicitly approve it
+
+> **Text-first by design.** Page images are **off by default** and opt-in — see [When are images sent?](#when-are-images-sent) below. For many items no model is called at all: if a DOI is found on page 1, metadata comes straight from OpenAlex/CrossRef (the DOI shortcut), skipping the LLM.
 
 There is also a **right-click "Quick Fill"** mode for orphan PDFs that creates a parent item and writes the AI-extracted metadata in one shot, with a persistent activity log visible from the dialog.
 
@@ -213,12 +215,30 @@ git push --tags
 
 For each item:
 
-1. The first two pages of the PDF are read.
+1. The first pages of the PDF are read (2 for short docs, up to 4 for long ones — configurable).
 2. **Text extraction** via Zotero's bundled pdf.js.
-3. **Image rasterisation** of both pages, stitched **side-by-side** into a single PNG (halves image-token cost).
-4. Both text and combined image are sent to the LLM in a single request.
+3. **Image rasterisation** of those pages, stitched **side-by-side** into a single PNG — **only when image sending is enabled and the model is vision-capable** (halves image-token cost vs. one image per page).
+4. The text (and the image, when included) is sent to the LLM in a single request.
 
-If pdf.js rendering is unavailable, the plugin falls back to text-only mode using Zotero's full-text index.
+If pdf.js rendering is unavailable, the plugin falls back to text-only mode using Zotero's full-text index (no image is produced, regardless of the setting).
+
+### When are images sent?
+
+Images are **opt-in and conditional**. An image is attached to a request **only when all** of these hold:
+
+1. **You enabled it** — tick *"Send rendered page images to the model"* in the dialog (`sendImages` pref, default **off**).
+2. **An image was actually rendered** — i.e. pdf.js was available (the text-only fallback produces none).
+3. **The model is vision-capable** — checked by a name heuristic (`_modelSupportsVision`):
+
+| Provider | Image sent when enabled? |
+|----------|--------------------------|
+| **OpenAI** | Yes for vision models (`gpt-4o`, `gpt-4.1`, …); skipped for text-only families (`gpt-3.5`, embeddings, etc.) |
+| **Anthropic** | Yes (Claude 3/4 are multimodal) |
+| **Google Gemini** | Yes (Gemini is multimodal) |
+| **OpenAI-compatible (Ollama, …)** | **Only if the model name signals vision** (`llava`, `*-vl`, `pixtral`, `gemma3`, `*4o`, …) — most local models are text-only, so by default no image is sent |
+| **Apple Intelligence (on-device)** | **Never** — the on-device model is text-only |
+
+When an image is rendered but **not** sent, the dialog log says why (e.g. *"available (skipped — llama3 is not vision-capable)"* or *"available (images off — opt in to send)"*), so the behaviour is never silent. The same logic and wording apply to the right-click Quick Fill flow.
 
 ## Configuration
 
@@ -233,7 +253,7 @@ Stored as Zotero prefs under `extensions.metadata-filler.*`:
 | `systemPromptTemplate` | _(empty = default)_ | Override prompt with `{itemTypeLabel}` / `{fieldList}` |
 | `concurrency` | `3` | Parallel requests (1–10) |
 | `maxTokens` | `2048` | Max response tokens |
-| `sendImages` | `true` | Whether to ship rendered page images |
+| `sendImages` | `false` | Opt-in: ship rendered page images (vision-capable models only — see [When are images sent?](#when-are-images-sent)) |
 | `doiShortcut` | `true` | DOI on page 1 → OpenAlex shortcut, skip LLM |
 | `forceLLM` | `false` | Override the DOI shortcut, always use the model |
 | `enrich` | `true` | Confirm/extend via OpenAlex/CrossRef after LLM |
@@ -250,7 +270,8 @@ Stored as Zotero prefs under `extensions.metadata-filler.*`:
 - **No automatic writes**: the manual flow is review-gated.
 - **Quick Fill _does_ write directly** — by design, since it's a one-click action. Use the dialog if you want a review step.
 - **API keys stored locally** in Zotero prefs.
-- **Only first 2 pages** of each PDF are sent.
+- **Only the first pages** of each PDF are sent (2 for short docs, up to 4 for long; configurable).
+- **Page images are off by default** — text-only unless you opt in, and never sent to text-only models.
 - **No telemetry.**
 
 ## What v1.2 added

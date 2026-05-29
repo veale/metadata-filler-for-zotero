@@ -120,9 +120,9 @@
                     <html:pre id="cfg-apple-status" style="display:none; margin-top:6px; max-height:240px; overflow:auto; background:#0b1021; color:#e5e7eb; font-family:monospace; font-size:11px; padding:8px; border-radius:4px; white-space:pre-wrap; user-select:text; -moz-user-select:text; cursor:text;"></html:pre>
                 </vbox>
                 <hbox align="center" style="margin-top: 4px;">
-                    <html:input type="checkbox" id="cfg-send-images" checked="true"/>
+                    <html:input type="checkbox" id="cfg-send-images"/>
                     <html:label for="cfg-send-images" style="font-size: 12px; cursor: pointer;">
-                        Send first pages as images for visual analysis (better results, higher API cost)
+                        Send rendered page images to the model (opt-in; vision-capable models only — text-only models like Apple on-device and most Ollama models ignore them; raises API cost)
                     </html:label>
                 </hbox>
                 <hbox align="center" style="margin-top: 4px;">

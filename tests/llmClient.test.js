@@ -131,3 +131,51 @@ test("_buildSystemPrompt expands {fieldList} and {itemTypeLabel}", () => {
     assert.match(out, /"title": Title/);
     assert.match(out, /"doi": DOI/);
 });
+
+test("_modelSupportsVision: cloud flagships yes, text-only families no", () => {
+    const c = client();
+    // Cloud vision-capable defaults
+    assert.equal(c._modelSupportsVision("openai", "gpt-4o"), true);
+    assert.equal(c._modelSupportsVision("anthropic", "claude-sonnet-4-20250514"), true);
+    assert.equal(c._modelSupportsVision("google", "gemini-2.0-flash"), true);
+    // Clearly text-only / non-multimodal families on cloud
+    assert.equal(c._modelSupportsVision("openai", "gpt-3.5-turbo"), false);
+    assert.equal(c._modelSupportsVision("openai", "text-embedding-3-large"), false);
+    // Apple on-device is always text-only
+    assert.equal(c._modelSupportsVision("apple", "apple-foundation"), false);
+});
+
+test("_modelSupportsVision: custom/OpenAI-compatible requires a vision marker", () => {
+    const c = client();
+    // Typical local text-only models -> no image
+    for (const m of ["llama3", "mistral", "qwen2.5", "phi3", "deepseek-r1"]) {
+        assert.equal(c._modelSupportsVision("custom", m), false, m + " should be text-only");
+    }
+    // Vision-capable local models -> image allowed
+    for (const m of ["llava", "llama3.2-vision", "qwen2-vl", "pixtral", "minicpm-v", "gemma3"]) {
+        assert.equal(c._modelSupportsVision("custom", m), true, m + " should be vision");
+    }
+});
+
+test("resolveImageDecision: opt-in + availability + vision gating with reasons", () => {
+    const c = client();
+    // Disabled -> never send; reason notes availability
+    assert.deepEqual(
+        c.resolveImageDecision("openai", "gpt-4o", false, true),
+        { send: false, reason: "available (images off — opt in to send)" });
+    assert.deepEqual(
+        c.resolveImageDecision("openai", "gpt-4o", false, false),
+        { send: false, reason: "no" });
+    // Enabled but nothing rendered (text-only fallback)
+    assert.deepEqual(
+        c.resolveImageDecision("openai", "gpt-4o", true, false),
+        { send: false, reason: "no (none rendered — text-only)" });
+    // Enabled + rendered + vision-capable -> send
+    assert.deepEqual(
+        c.resolveImageDecision("anthropic", "claude-sonnet-4-20250514", true, true),
+        { send: true, reason: "yes (sending)" });
+    // Enabled + rendered but model not vision-capable -> skip with reason
+    const d = c.resolveImageDecision("custom", "llama3", true, true);
+    assert.equal(d.send, false);
+    assert.match(d.reason, /not vision-capable/);
+});

@@ -57,10 +57,12 @@ function startup({ id, version, rootURI }) {
         _libsLoaded = false;
     }
 
-    // Init default prefs
+    // Init default prefs. Image sending is OPT-IN (default off): it raises API
+    // cost, is silently useless for text-only models (Apple on-device, most
+    // Ollama models), and the text path alone is enough for the common case.
     try {
         if (Zotero.Prefs.get("extensions.metadata-filler.sendImages") === undefined) {
-            Zotero.Prefs.set("extensions.metadata-filler.sendImages", true);
+            Zotero.Prefs.set("extensions.metadata-filler.sendImages", false);
         }
     } catch(e) {}
 
@@ -371,9 +373,13 @@ async function quickFillSelected(win) {
                 throw new Error("Could not extract readable text from PDF");
             }
 
-            // Check if we should send images
-            var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages");
-            var imageToSend = sendImages ? pdfData.imageBase64 : null;
+            // Decide whether to attach the page image: opt-in setting + the
+            // model must be vision-capable + an image must have been rendered.
+            // Same logic and log wording as the manual dialog flow.
+            var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") === true;
+            var imgDecision = LLMClient.resolveImageDecision(provider, model, sendImages, !!pdfData.imageBase64);
+            var imageToSend = imgDecision.send ? pdfData.imageBase64 : null;
+            _qfLogAppend("  image: " + imgDecision.reason);
 
             // ── DOI shortcut for Quick Fill ──
             // If the first page contains a DOI and the user hasn't disabled

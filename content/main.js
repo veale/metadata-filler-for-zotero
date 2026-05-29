@@ -429,7 +429,7 @@ var MetadataFillerDialog = {
                 Zotero.Prefs.set("extensions.metadata-filler." + prefKey, el.checked);
             });
         };
-        setChk("cfg-send-images",   "sendImages",       true);
+        setChk("cfg-send-images",   "sendImages",       false);
         setChk("cfg-doi-shortcut",  "doiShortcut",      true);
         setChk("cfg-force-llm",     "forceLLM",         false);
         setChk("cfg-enrich",        "enrich",           true);
@@ -872,13 +872,16 @@ var MetadataFillerDialog = {
         }
         var provider = document.getElementById("cfg-provider").value;
         var model = LLMClient.getEffectiveModel(provider);
-        var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") !== false;
+        var sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") === true;
+        // Only count image tokens if images are opted-in AND the model can
+        // actually use them — otherwise the estimate overstates cost.
+        var willSendImage = sendImages && LLMClient._modelSupportsVision(provider, model);
 
         // We don't want to actually open the PDFs here — too slow. Use a
         // rough per-item estimate of ~6000 chars of extracted text from the
         // first pages. Refined estimates would require running PDFProcessor.
         var charsPerItem = 6000;
-        var items = indices.map(function() { return { textChars: charsPerItem, hasImage: sendImages }; });
+        var items = indices.map(function() { return { textChars: charsPerItem, hasImage: willSendImage }; });
         var est = CostEstimator.estimate({
             provider: provider,
             model: model,
@@ -971,7 +974,7 @@ var MetadataFillerDialog = {
         const apiKey = LLMClient.getAPIKey(provider);
         const model = LLMClient.getEffectiveModel(provider);
         const maxTokens = Zotero.Prefs.get("extensions.metadata-filler.maxTokens") || 2048;
-        const sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") !== false;
+        const sendImages = Zotero.Prefs.get("extensions.metadata-filler.sendImages") === true;
         const doiShortcut = Zotero.Prefs.get("extensions.metadata-filler.doiShortcut") !== false;
         const forceLLM = !!Zotero.Prefs.get("extensions.metadata-filler.forceLLM");
         const enrichEnabled = Zotero.Prefs.get("extensions.metadata-filler.enrich") !== false;
@@ -1021,10 +1024,14 @@ var MetadataFillerDialog = {
                     // Extract text & image from PDF
                     const pdfData = await PDFProcessor.process(attachment);
 
-                    // Check if user wants to send images
-                    var imageToSend = (sendImages && pdfData.imageBase64) ? pdfData.imageBase64 : null;
+                    // Decide whether to attach the page image: opt-in setting
+                    // + the model must be vision-capable + an image must have
+                    // actually been rendered. Centralised so the log reason is
+                    // consistent with Quick Fill.
+                    var imgDecision = LLMClient.resolveImageDecision(provider, model, sendImages, !!pdfData.imageBase64);
+                    var imageToSend = imgDecision.send ? pdfData.imageBase64 : null;
 
-                    var extractInfo = pdfData.text.length + " chars, image: " + (imageToSend ? "yes (sending)" : pdfData.imageBase64 ? "available (not sending)" : "no");
+                    var extractInfo = pdfData.text.length + " chars, image: " + imgDecision.reason;
                     var textPreview = pdfData.text.substring(0, 80).replace(/\n/g, " ");
                     this._log(logEl, "  > Extracted " + extractInfo);
                     this._log(logEl, "  > Preview: " + textPreview + "...");
